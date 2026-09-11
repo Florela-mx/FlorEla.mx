@@ -4288,64 +4288,9 @@ document.addEventListener("click",function(e){
 })();
 </script><script>document.addEventListener("DOMContentLoaded",()=>setTimeout(()=>window.florelaBuilder&&window.florelaBuilder.apply(),100));</script>
 <script id="florela-persistence-fix-v73">
-(function(){
-  const KEY='florelaAdminV2Data';
-  const DB='FlorElaAdminPersistenceDB';
-  const STORE='config';
-  function db(){return new Promise((resolve,reject)=>{try{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'});};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);}catch(e){reject(e)}})}
-  async function idbGet(){try{const d=await db();return await new Promise((res,rej)=>{const r=d.transaction(STORE,'readonly').objectStore(STORE).get('main');r.onsuccess=()=>res(r.result?r.result.value:null);r.onerror=()=>rej(r.error)})}catch(e){return null}}
-  async function idbSet(v){try{const d=await db();await new Promise((res,rej)=>{const r=d.transaction(STORE,'readwrite').objectStore(STORE).put({id:'main',value:v});r.onsuccess=()=>res();r.onerror=()=>rej(r.error)});return true}catch(e){return false}}
-  function lsGet(){try{return JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){return null}}
-  function lsSet(v){try{localStorage.setItem(KEY,JSON.stringify(v));return true}catch(e){return false}}
-  async function restore(){
-    const a=lsGet(), b=await idbGet();
-    const data=a||b;
-    if(data) lsSet(data);
-    return data;
-  }
-  async function capture(){
-    const old=lsGet()||{};
-    const q=id=>document.getElementById(id);
-    const n=(id,def)=>q(id)?Number(q(id).value):def;
-    const v=(id,def)=>q(id)?q(id).value:def;
-    const data=Object.assign({},old,{
-      speed:n('fv2Speed',old.speed||5),height:n('fv2Height',old.height||430),
-      primary:v('fv2Primary',old.primary||'#b82f35'),secondary:v('fv2Secondary',old.secondary||'#f8e9e9'),
-      bg:v('fv2Bg',old.bg||'#fbf3e9'),text:v('fv2Text',old.text||'#2d2927'),
-      headFont:v('fv2HeadFont',old.headFont||'Georgia'),bodyFont:v('fv2BodyFont',old.bodyFont||'Arial'),
-      base:n('fv2Base',old.base||16),radius:n('fv2Radius',old.radius||18),
-      footerBrand:v('fv2FooterBrand',old.footerBrand||'FlorEla'),footerText:v('fv2FooterText',old.footerText||''),
-      heroTitle:v('fv2HeroTitle',old.heroTitle||''),heroSub:v('fv2HeroSub',old.heroSub||''),
-      presentationTitle:v('fv2PresentationTitle',old.presentationTitle||''),presentationSlogan:v('fv2PresentationSlogan',old.presentationSlogan||''),
-      productsTitle:v('fv2ProductsTitle',old.productsTitle||''),
-      shipText:v('fv2ShipText',old.shipText||''),terms:v('fv2Terms',old.terms||''),returns:v('fv2Returns',old.returns||''),privacy:v('fv2Privacy',old.privacy||''),payments:v('fv2Payments',old.payments||''),faq:v('fv2Faq',old.faq||''),
-      addMsg:v('fv2AddMsg',old.addMsg||''),favMsg:v('fv2FavMsg',old.favMsg||''),flowerDuration:n('fv2FlowerDuration',old.flowerDuration||2600),flowerCount:n('fv2FlowerCount',old.flowerCount||11),
-      cart:q('fv2Cart')?q('fv2Cart').checked:old.cart!==false,fav:q('fv2Fav')?q('fv2Fav').checked:old.fav!==false,flowers:q('fv2Flowers')?q('fv2Flowers').checked:old.flowers!==false,
-      images:q('fv2Images')?(q('fv2Images').value||'').split(/\n+/).map(x=>x.trim()).filter(Boolean):(old.images||[]),
-      bannerPhrases:Array.from({length:7},(_,i)=>q('fv2BannerPhrase'+(i+1))?.value?.trim()||'').filter(Boolean)
-    });
-    lsSet(data); await idbSet(data); return data;
-  }
-  async function boot(){
-    await restore();
-    const original=window.florElaOpenAdminV2;
-    if(original){
-      window.florElaOpenAdminV2=async function(){await restore();original();};
-    }
-    document.addEventListener('click',function(e){
-      const b=e.target.closest('#fv2Save');
-      if(b){setTimeout(()=>capture(),30)}
-    },true);
-    document.addEventListener('click',function(e){
-      const b=e.target.closest('#fv2BackStore,#fv2SaveStore');
-      if(b){capture()}
-    },true);
-    document.addEventListener('change',function(e){
-      if(e.target.matches('[data-secname],[data-cati],[data-menui]'))setTimeout(()=>capture(),20);
-    });
-  }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
-})();
+/* V8: DESACTIVADO. La fuente única de verdad es Supabase.
+   No restaurar florelaAdminV2Data desde localStorage/IndexedDB porque puede
+   reinyectar una copia vieja y pisar la información recién cargada de la nube. */
 </script>
 <script id="florela-v77-banner-media-engine">
 (function(){
@@ -8773,7 +8718,7 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
   // One canonical public loader only.
   window.__florelaPublicCloudV18={refresh:cloudLoad,pull:cloudLoad};
   let started=false;
-  function start(){if(started)return;started=true;try{if(sessionStorage.getItem('florelaAdminUnlocked')==='1'){revealCatalog();return;}}catch(e){} cloudLoad();}
+  function start(){if(started)return;started=true; cloudLoad();}
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true}); else start();
   // Safety fallback for a blocked network.
   setTimeout(revealCatalog,4000);
