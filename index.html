@@ -8729,21 +8729,24 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
   }
   async function cloudLoad(){
     try{
-      const r=await fetch(ENDPOINT+'?v='+Date.now(),{cache:'no-store',headers:{Accept:'application/json','Cache-Control':'no-cache','Pragma':'no-cache'}});
-      const j=await r.json();
-      if(!r.ok||!j?.ok||!j.data) throw new Error(j?.error||('HTTP '+r.status));
-      const raw=j.data, main=raw?.main&&typeof raw.main==='object'?raw.main:raw, extra=raw?.extra&&typeof raw.extra==='object'?raw.extra:{};
+      // V7: the RPC endpoint is POST-only. Public browsers must READ the
+      // canonical row through the REST table endpoint instead.
+      const READ_ENDPOINT='https://ouxqgwqolajtvcusckag.supabase.co/rest/v1/florela_app_state?id=eq.main&select=data,updated_at';
+      const r=await fetch(READ_ENDPOINT+'&v='+Date.now(),{cache:'no-store',headers:{'apikey':SBKEY,'Authorization':'Bearer '+SBKEY,'Accept':'application/json','Cache-Control':'no-cache','Pragma':'no-cache'}});
+      const rows=await r.json();
+      if(!r.ok||!Array.isArray(rows)||!rows.length||!rows[0]?.data) throw new Error(rows?.message||('HTTP '+r.status));
+      const raw=rows[0].data, main=raw?.main&&typeof raw.main==='object'?raw.main:raw, extra=raw?.extra&&typeof raw.extra==='object'?raw.extra:{};
       localStorage.setItem(KEY,JSON.stringify(main));
       localStorage.setItem(EXTRA,JSON.stringify(extra));
       window.__florelaCloudStateLoaded=true;
       window.__florelaCloudMain=main;
       window.__florelaCloudExtra=extra;
-      window.__florelaCloudUpdatedAt=j.updated_at||null;
+      window.__florelaCloudUpdatedAt=rows[0].updated_at||null;
       try{window.__florelaAdminProducts=Array.isArray(main.products)?main.products:[];window.florelaAdminV2Data=main}catch(e){}
       // Render exactly once from the canonical cloud snapshot.
       window.dispatchEvent(new CustomEvent('florela-products-updated',{detail:{source:'cloud-final-v5'}}));
       revealCatalog();
-      console.info('[FlorEla Cloud V5] canonical state loaded',j.updated_at);
+      console.info('[FlorEla Cloud V7] canonical state loaded',rows[0].updated_at);
       return true;
     }catch(e){
       console.warn('[FlorEla Cloud V5] load failed',e);
