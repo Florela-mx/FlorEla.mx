@@ -8677,7 +8677,10 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
 <script id="florela-final-single-cloud-sync-v1">
 (function(){
   'use strict';
-  const ENDPOINT='https://ouxqgwqolajtvcusckag.supabase.co/functions/v1/florela-state-sync';
+  // V6: use the proven PostgreSQL RPC directly. This avoids the Edge Function
+  // browser/CORS path that was reporting false cloud-save failures.
+  const ENDPOINT='https://ouxqgwqolajtvcusckag.supabase.co/rest/v1/rpc/florela_save_state';
+  const SBKEY='sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e';
   const TOKEN='florela-web-sync-v1';
   const KEY='florelaAdminV2Data';
   const EXTRA='florelaEditableTextsV2';
@@ -8712,10 +8715,16 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
   async function cloudSave(){
     const n=++seq, data=snapshot();
     try{
-      const r=await fetch(ENDPOINT,{method:'POST',cache:'no-store',headers:{'Content-Type':'application/json','Accept':'application/json','x-florela-admin':TOKEN},body:JSON.stringify({data})});
+      const r=await fetch(ENDPOINT,{
+        method:'POST',cache:'no-store',
+        headers:{'apikey':SBKEY,'Authorization':'Bearer '+SBKEY,'Content-Type':'application/json','Accept':'application/json','Prefer':'return=representation'},
+        body:JSON.stringify({p_id:'main',p_data:data,p_token:TOKEN})
+      });
       const text=await r.text(); let j=null; try{j=JSON.parse(text)}catch(e){}
-      if(!r.ok||!j?.ok) throw new Error(j?.error||text||('HTTP '+r.status));
-      return {ok:true,updated_at:j.updated_at,seq:n};
+      if(!r.ok) throw new Error(j?.message||j?.error||text||('HTTP '+r.status));
+      if(j && j.ok===false) throw new Error(j.error||'Supabase rechazó el guardado');
+      const row=Array.isArray(j)?j[0]:j;
+      return {ok:true,updated_at:row?.updated_at||new Date().toISOString(),seq:n};
     }catch(e){console.error('[FlorEla Cloud] save failed',e);return {ok:false,error:String(e?.message||e),seq:n};}
   }
   async function cloudLoad(){
