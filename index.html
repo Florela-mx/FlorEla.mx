@@ -1978,8 +1978,8 @@ header .header-actions{margin-left:auto!important}
 </style>
 </head>
 <body>
-<!-- FLORELA CLOUD CORE V3 · SINGLE AUTHORITATIVE SYNC -->
-<style id="florela-cloud-core-v3-ui">
+<!-- FLORELA CLOUD CORE V4 · SINGLE AUTHORITATIVE SYNC -->
+<style id="florela-cloud-core-v4-ui">
 #florelaCloudSyncStatus,#florelaCloudPhotoStatus{
   position:fixed;z-index:999999;max-width:360px;padding:11px 14px;
   border:1px solid #ead8d2;border-radius:14px;background:rgba(255,250,247,.97);
@@ -8879,5 +8879,93 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
 #florelaCloudSyncStatus{position:fixed;right:16px;bottom:16px;z-index:999999;max-width:330px;padding:11px 14px;border:1px solid #ead8d2;border-radius:14px;background:rgba(255,250,247,.97);box-shadow:0 10px 30px rgba(60,30,30,.14);font:700 12px Arial,sans-serif;color:#7f2734;display:none}
 #florelaCloudSyncStatus.show{display:block}
 </style>
+
+<!-- FLORELA V4 PERSISTENCE BRIDGE · PHOTOS + TEXT -->
+<script id="florela-v4-persistence-bridge">
+(function(){
+  'use strict';
+  const PHOTO_INPUTS=['#fv2PPhotos','#flCollabPhotos'];
+  const TEXT_KEY='florelaEditableTextsV2';
+  let photoTimer=0, textTimer=0;
+
+  function cloudReady(){return !!window.__florelaCloudSync && !!window.__florelaCloudPhotos}
+
+  function schedulePhotoSync(reason){
+    clearTimeout(photoTimer);
+    photoTimer=setTimeout(async function(){
+      if(!cloudReady())return;
+      try{
+        /* IDB writes must finish before the cloud reconciliation reads them. */
+        await window.__florelaCloudPhotos.migrate();
+        await window.__florelaCloudSync.push();
+      }catch(e){console.warn('[FlorEla V4] photo persistence retry',reason,e)}
+    },1400);
+  }
+
+  function scheduleTextSync(reason){
+    clearTimeout(textTimer);
+    textTimer=setTimeout(async function(){
+      if(!window.__florelaCloudSync)return;
+      try{
+        /* The editable-text engine saves EXTRA independently of main state. */
+        const raw=localStorage.getItem(TEXT_KEY);
+        if(!raw)return;
+        await window.__florelaCloudSync.push();
+      }catch(e){console.warn('[FlorEla V4] text persistence retry',reason,e)}
+    },500);
+  }
+
+  /* Keep the optional flash-popup copy inside the same cloud payload too.
+     The legacy popup engine can continue using its original localStorage key. */
+  function mirrorFlashToExtra(){
+    try{
+      const raw=localStorage.getItem('florelaFlashPopupConfig');
+      if(!raw)return;
+      const extra=JSON.parse(localStorage.getItem(TEXT_KEY)||'{}');
+      const flash=JSON.parse(raw);
+      extra._flashPopup=flash;
+      localStorage.setItem(TEXT_KEY,JSON.stringify(extra));
+    }catch(e){}
+  }
+
+  function restoreFlashFromExtra(){
+    try{
+      const extra=JSON.parse(localStorage.getItem(TEXT_KEY)||'{}');
+      if(extra&&extra._flashPopup)
+        localStorage.setItem('florelaFlashPopupConfig',JSON.stringify(extra._flashPopup));
+    }catch(e){}
+  }
+
+  document.addEventListener('change',function(e){
+    if(PHOTO_INPUTS.some(sel=>e.target.closest(sel))) schedulePhotoSync('photo-input');
+  },true);
+
+  document.addEventListener('click',function(e){
+    if(e.target.closest('#fv2SaveProduct,#flCollabSave')) schedulePhotoSync('product-save');
+    if(e.target.closest('#fv2Save')){ mirrorFlashToExtra(); scheduleTextSync('admin-save'); }
+  },true);
+
+  window.addEventListener('florela-products-updated',function(){
+    /* Product fields are persisted through localStorage; this catches saves
+       performed by engines that do not expose their own save callback. */
+    if(window.__florelaCloudSync) schedulePhotoSync('products-updated');
+  });
+
+  window.addEventListener('florela-collab-updated',function(){
+    if(window.__florelaCloudSync) schedulePhotoSync('collab-updated');
+  });
+
+  /* After cloud bootstrap, restore the cloud copy of popup text/config. */
+  let restoreTries=0;
+  const restoreTimer=setInterval(function(){
+    restoreTries++;
+    if(window.__florelaCloudSync){
+      restoreFlashFromExtra();
+      if(restoreTries>20)clearInterval(restoreTimer);
+    }
+    if(restoreTries>40)clearInterval(restoreTimer);
+  },250);
+})();
+</script>
 </body>
 </html>
