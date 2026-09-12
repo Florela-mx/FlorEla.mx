@@ -2,67 +2,6 @@
 
 <html lang="es">
 <head>
-<script id="florela-root-cloud-bootstrap-v21">
-(function(){
-  'use strict';
-  /* FlorEla V21: cloud state is loaded synchronously BEFORE any legacy renderer.
-     This is intentionally same-origin (/api/florela-state) so every browser starts
-     from Supabase instead of an old localStorage snapshot. */
-  try {
-    var isAdmin = false;
-    try { isAdmin = sessionStorage.getItem('florelaAdminUnlocked') === '1'; } catch(e) {}
-    /* V26: read the canonical state directly from Supabase. The previous V21
-       bootstrap depended on /api/florela-state, but production was deployed as
-       a static upload and that route did not exist, causing an avoidable 404. */
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET','https://ouxqgwqolajtvcusckag.supabase.co/rest/v1/florela_app_state?id=eq.main&select=data,updated_at&_='+Date.now(),false);
-    xhr.setRequestHeader('apikey','sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e');
-    xhr.setRequestHeader('Authorization','Bearer sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e');
-    xhr.setRequestHeader('Accept','application/json');
-    xhr.setRequestHeader('Cache-Control','no-cache');
-    xhr.send(null);
-    if (xhr.status >= 200 && xhr.status < 300) {
-      var rows = JSON.parse(xhr.responseText || '[]');
-      var row = Array.isArray(rows) ? rows[0] : null;
-      var packet = row ? {ok:true, data:row.data, updated_at:row.updated_at} : null;
-      if (packet && packet.ok && packet.data && typeof packet.data === 'object') {
-        if (isAdmin) { window.__florelaCloudBootstrap = {updated_at:packet.updated_at||null, ok:true, admin:true}; return; }
-        /* Canonical cloud packet is {main, extra}; never put the envelope in the
-           main localStorage key. */
-        var cloudRaw = packet.data;
-        var d = (cloudRaw && cloudRaw.main && typeof cloudRaw.main === 'object') ? cloudRaw.main : cloudRaw;
-        var cloudExtra = (cloudRaw && cloudRaw.extra && typeof cloudRaw.extra === 'object') ? cloudRaw.extra : {};
-        localStorage.setItem('florelaAdminV2Data', JSON.stringify(d));
-        localStorage.setItem('florelaEditableTextsV2', JSON.stringify(cloudExtra));
-        var legacy = Object.assign({}, d, {
-          heroDesc: d.heroDesc != null ? d.heroDesc : d.heroSub,
-          heroEyebrow: d.heroEyebrow != null ? d.heroEyebrow : 'FLORELA',
-          heroButton: d.heroButton != null ? d.heroButton : '',
-          giftEyebrow: d.giftEyebrow != null ? d.giftEyebrow : '',
-          giftTitle: d.giftTitle != null ? d.giftTitle : d.giftFloatTitle,
-          giftDesc: d.giftDesc != null ? d.giftDesc : d.giftFloatText,
-          giftButton: d.giftButton != null ? d.giftButton : d.giftFloatCta,
-          bannerImages: Array.isArray(d.bannerImages) ? d.bannerImages : (Array.isArray(d.images) ? d.images : []),
-          heroPhrase1: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[0] || '') : '',
-          heroPhrase2: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[1] || '') : '',
-          heroPhrase3: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[2] || '') : '',
-          heroPhrase4: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[3] || '') : '',
-          heroPhrase5: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[4] || '') : '',
-          heroPhrase6: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[5] || '') : '',
-          heroPhrase7: Array.isArray(d.bannerPhrases) ? (d.bannerPhrases[6] || '') : '',
-          products: Array.isArray(d.products) ? d.products.map(function(p){ return Object.assign({},p,{desc:p && p.description!=null?p.description:'',tag:p && p.tags!=null?p.tags:''}); }) : []
-        });
-        localStorage.setItem('florelaData', JSON.stringify(legacy));
-        window.__florelaCloudBootstrap = {updated_at:packet.updated_at||null, ok:true};
-      }
-    }
-  } catch (e) {
-    window.__florelaCloudBootstrap = {ok:false,error:String(e && e.message || e)};
-    /* If cloud is temporarily unreachable, preserve the local cache so the shop
-       can still open; the normal save/read mechanisms remain available. */
-  }
-})();
-</script>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>FlorEla | </title>
@@ -2039,6 +1978,860 @@ header .header-actions{margin-left:auto!important}
 </style>
 </head>
 <body>
+<!-- FLORELA CLOUD CORE V3 · SINGLE AUTHORITATIVE SYNC -->
+<style id="florela-cloud-core-v3-ui">
+#florelaCloudSyncStatus,#florelaCloudPhotoStatus{
+  position:fixed;z-index:999999;max-width:360px;padding:11px 14px;
+  border:1px solid #ead8d2;border-radius:14px;background:rgba(255,250,247,.97);
+  box-shadow:0 10px 30px rgba(60,30,30,.14);font:700 12px Arial,sans-serif;
+  color:#7f2734;display:none
+}
+#florelaCloudSyncStatus{right:16px;bottom:16px}
+#florelaCloudPhotoStatus{left:16px;bottom:16px}
+#florelaCloudSyncStatus.show,#florelaCloudPhotoStatus.show{display:block}
+</style>
+<script id="florela-cloud-core-v3">
+(function(){
+  'use strict';
+
+  /*
+   * FlorEla Cloud Core V3
+   *
+   * SOURCE OF TRUTH:
+   *   Supabase app_state + Supabase Storage
+   *   localStorage / IndexedDB = local cache only
+   *
+   * IMPORTANT:
+   * This script is intentionally placed at the beginning of <body>.
+   * The old core ran after the admin engine had already captured its
+   * localStorage state in a closure. A later cloud pull could therefore
+   * update localStorage while the admin still held stale in-memory data.
+   * V3 resolves that race by:
+   *   1) capturing the pre-cloud local snapshot,
+   *   2) loading cloud before the rest of the app can become authoritative,
+   *   3) applying the chosen state,
+   *   4) reloading once so every existing engine initializes from that state,
+   *   5) syncing IndexedDB photos BEFORE the JSON state push,
+   *   6) never pushing until the initial GET has completed.
+   */
+
+  const ENDPOINT='https://xojjvlsajeankxkbprtf.supabase.co/functions/v1/florela-sync';
+  const STATE_KEY='florelaAdminV2Data';
+  const EXTRA_KEY='florelaEditableTextsV2';
+  const SECRET_KEY='florelaSyncSecret';
+  const UNLOCK_KEY='florelaAdminUnlocked';
+
+  const PHOTO_DB='FlorEla_Product_Photos_V81';
+  const PHOTO_STORE='photos';
+  const MAX_PHOTOS=10;
+
+  const BOOT_LOCAL_KEY='florelaSyncBootLocalV3';
+  const APPLIED_FP_KEY='florelaSyncAppliedFingerprintV3';
+  const RELOAD_KEY='florelaSyncReloadV3';
+
+  let booted=false;
+  let cloudReady=false;
+  let syncing=false;
+  let pendingPush=false;
+  let pushTimer=0;
+  let statusTimer=0;
+  let lastCloud=null;
+  let suppressStorageHook=false;
+  let originalSetItem=null;
+  let originalRemoveItem=null;
+  let originalClear=null;
+
+  const $=id=>document.getElementById(id);
+
+  function safeParse(v,fallback=null){
+    try{return JSON.parse(v)}catch(e){return fallback}
+  }
+
+  function read(key,fallback=null){
+    try{
+      const raw=localStorage.getItem(key);
+      return raw==null?fallback:safeParse(raw,fallback);
+    }catch(e){return fallback}
+  }
+
+  function rawWrite(key,value){
+    try{
+      const raw=JSON.stringify(value);
+      if(originalSetItem) originalSetItem(key,raw);
+      else localStorage.setItem(key,raw);
+      return true;
+    }catch(e){
+      console.warn('[FlorEla Cloud] local write failed',e);
+      return false;
+    }
+  }
+
+  function write(key,value){
+    suppressStorageHook=true;
+    try{return rawWrite(key,value)}
+    finally{suppressStorageHook=false}
+  }
+
+  function localSnapshot(){
+    return {
+      main:read(STATE_KEY)||{},
+      extra:read(EXTRA_KEY)||null
+    };
+  }
+
+  function productCount(main){
+    return Array.isArray(main?.products)?main.products.length:0;
+  }
+
+  function useful(main){
+    return !!(
+      main &&
+      typeof main==='object' &&
+      (
+        Array.isArray(main.products) ||
+        main.primary ||
+        main.bg ||
+        main.categories ||
+        main.collabSectionEnabled!==undefined
+      )
+    );
+  }
+
+  function pidOf(p,i){
+    return String(p?.pid||p?.sku||p?.id||('prod_'+i));
+  }
+
+  function productArrays(main){
+    return [
+      ...(Array.isArray(main?.products)?main.products:[]),
+      ...(Array.isArray(main?.collabIndependentProducts)?main.collabIndependentProducts:[])
+    ];
+  }
+
+  function clone(v){
+    try{return JSON.parse(JSON.stringify(v))}
+    catch(e){return v}
+  }
+
+  function fingerprint(v){
+    try{return JSON.stringify(v||{})}
+    catch(e){return ''}
+  }
+
+  function unlocked(){
+    try{return sessionStorage.getItem(UNLOCK_KEY)==='1'}
+    catch(e){return false}
+  }
+
+  function secret(){
+    try{return String(sessionStorage.getItem(SECRET_KEY)||'').trim()}
+    catch(e){return ''}
+  }
+
+  function setSecret(v){
+    try{sessionStorage.setItem(SECRET_KEY,String(v||'').trim())}catch(e){}
+  }
+
+  function notify(id,msg,ok=true){
+    let el=$(id);
+    if(!el){
+      el=document.createElement('div');
+      el.id=id;
+      document.body.appendChild(el);
+    }
+    el.textContent=(ok?'☁️ ':'⚠️ ')+msg;
+    el.classList.add('show');
+    clearTimeout(statusTimer);
+    statusTimer=setTimeout(()=>el.classList.remove('show'),5000);
+  }
+
+  function dispatchAll(){
+    window.dispatchEvent(new Event('florela-products-updated'));
+    window.dispatchEvent(new Event('florela-social-updated'));
+    window.dispatchEvent(new Event('florela-collab-updated'));
+    window.dispatchEvent(new Event('florela-appearance-updated'));
+    try{window.__florelaRenderCatalog?.()}catch(e){}
+    try{window.__florelaRenderFavorites?.()}catch(e){}
+    try{window.__florelaRenderCollabSection?.()}catch(e){}
+  }
+
+  /*
+   * Install the localStorage observer immediately.
+   * It does NOT push anything while the cloud bootstrap is running.
+   * This prevents later initialization scripts from accidentally causing
+   * a premature POST.
+   */
+  function installStorageHook(){
+    if(window.__florelaCloudStorageHookV3)return;
+    try{
+      originalSetItem=localStorage.setItem.bind(localStorage);
+      originalRemoveItem=localStorage.removeItem.bind(localStorage);
+      originalClear=localStorage.clear.bind(localStorage);
+
+      localStorage.setItem=function(key,value){
+        const k=String(key);
+        const before=(k===STATE_KEY||k===EXTRA_KEY)?localStorage.getItem(k):null;
+        const result=originalSetItem(k,String(value));
+        if(!suppressStorageHook && cloudReady && unlocked() && (k===STATE_KEY||k===EXTRA_KEY)){
+          if(before!==String(value)) queuePush('localStorage');
+        }
+        return result;
+      };
+
+      localStorage.removeItem=function(key){
+        const k=String(key);
+        const result=originalRemoveItem(k);
+        if(!suppressStorageHook && cloudReady && unlocked() && (k===STATE_KEY||k===EXTRA_KEY)){
+          queuePush('localStorage-remove');
+        }
+        return result;
+      };
+
+      localStorage.clear=function(){
+        /*
+         * Never allow an accidental global clear to become a cloud write.
+         * The app does not need localStorage.clear() for normal operation.
+         */
+        const wasMain=localStorage.getItem(STATE_KEY);
+        const wasExtra=localStorage.getItem(EXTRA_KEY);
+        const result=originalClear();
+        if(!suppressStorageHook && cloudReady && unlocked() && (wasMain||wasExtra)){
+          notify('florelaCloudSyncStatus','Se detectó un borrado local completo; no se enviará a la nube automáticamente.',false);
+        }
+        return result;
+      };
+
+      window.__florelaCloudStorageHookV3=true;
+    }catch(e){
+      console.warn('[FlorEla Cloud] no se pudo instalar el guard de localStorage',e);
+    }
+  }
+
+  function openPhotoDB(){
+    return new Promise((resolve,reject)=>{
+      try{
+        const r=indexedDB.open(PHOTO_DB);
+        r.onupgradeneeded=()=>{
+          const db=r.result;
+          if(!db.objectStoreNames.contains(PHOTO_STORE)){
+            db.createObjectStore(PHOTO_STORE,{keyPath:'id',autoIncrement:true});
+          }
+        };
+        r.onsuccess=()=>resolve(r.result);
+        r.onerror=()=>reject(r.error);
+      }catch(e){reject(e)}
+    });
+  }
+
+  async function photoRows(){
+    const db=await openPhotoDB();
+    try{
+      return await new Promise((resolve,reject)=>{
+        const r=db.transaction(PHOTO_STORE,'readonly').objectStore(PHOTO_STORE).getAll();
+        r.onsuccess=()=>resolve(r.result||[]);
+        r.onerror=()=>reject(r.error);
+      });
+    }finally{db.close()}
+  }
+
+  async function updatePhotoRow(row){
+    const db=await openPhotoDB();
+    try{
+      await new Promise((resolve,reject)=>{
+        const r=db.transaction(PHOTO_STORE,'readwrite').objectStore(PHOTO_STORE).put(row);
+        r.onsuccess=()=>resolve();
+        r.onerror=()=>reject(r.error);
+      });
+    }finally{db.close()}
+  }
+
+  function safeFileName(name){
+    return String(name||'foto.jpg').replace(/[^a-zA-Z0-9._-]/g,'_').slice(0,120)||'foto.jpg';
+  }
+
+  function rowsForPid(rows,pid){
+    return rows
+      .filter(x=>String(x?.pid||x?.productId||x?.sku||'')===String(pid))
+      .sort((a,b)=>(Number(a?.created)||0)-(Number(b?.created)||0));
+  }
+
+  async function uploadPhotoRow(pid,row,index){
+    const sec=secret();
+    if(!sec)throw new Error('Falta FLORELA_SYNC_SECRET en la sesión del administrador.');
+
+    const form=new FormData();
+    const safe=safeFileName(row?.name||('foto-'+(index+1)+'.jpg'));
+    /*
+     * The current V6 Edge contract accepts multipart/form-data with:
+     *   path + file
+     * and returns { ok, public_url }.
+     */
+    form.append('path','products/'+encodeURIComponent(String(pid))+'/photo-'+String(row?.id||index+1)+'-'+safe);
+    form.append('file',row.blob,row?.name||safe);
+
+    const r=await fetch(ENDPOINT,{
+      method:'POST',
+      headers:{'x-florela-admin':sec},
+      body:form,
+      cache:'no-store'
+    });
+    const j=await r.json().catch(()=>({}));
+    if(!r.ok||!j?.ok||!j?.public_url){
+      throw new Error(j?.error||('PHOTO HTTP '+r.status));
+    }
+    return String(j.public_url);
+  }
+
+  /*
+   * IndexedDB is only a cache. Every local photo without cloudUrl is
+   * uploaded before the product JSON is pushed.
+   *
+   * We also reconcile cloudPhotos against the local photo rows. That means
+   * deleting a local photo removes its URL from the canonical product state
+   * even though the physical Storage object may remain as an orphan.
+   * Orphaned Storage objects are harmless because they are no longer referenced.
+   */
+  async function syncLocalPhotos(main){
+    if(!unlocked())return {uploaded:0,changed:false};
+    const sec=secret();
+    if(!sec)return {uploaded:0,changed:false};
+
+    let rows=[];
+    try{rows=await photoRows()}catch(e){
+      console.warn('[FlorEla Cloud Photos] IDB read failed',e);
+      return {uploaded:0,changed:false};
+    }
+
+    const products=productArrays(main);
+    let uploaded=0;
+    let changed=false;
+
+    for(let i=0;i<products.length;i++){
+      const p=products[i];
+      if(!p||typeof p!=='object')continue;
+
+      const pid=pidOf(p,i);
+      const items=rowsForPid(rows,pid).slice(0,MAX_PHOTOS);
+      const oldCloud=Array.isArray(p.cloudPhotos)?p.cloudPhotos.filter(Boolean).slice(0,MAX_PHOTOS):[];
+      const oldImage=String(p.image||'');
+      const urls=[];
+
+      for(let n=0;n<items.length;n++){
+        const row=items[n];
+        if(row?.cloudUrl){
+          if(!urls.includes(String(row.cloudUrl)))urls.push(String(row.cloudUrl));
+          continue;
+        }
+        if(!(row?.blob instanceof Blob))continue;
+
+        try{
+          const url=await uploadPhotoRow(pid,row,n);
+          row.cloudUrl=url;
+          await updatePhotoRow(row);
+          if(!urls.includes(url))urls.push(url);
+          uploaded++;
+          changed=true;
+        }catch(e){
+          console.warn('[FlorEla Cloud Photos] upload failed',pid,row?.id,e);
+          /*
+           * One failed photo must not block the rest of the catalog.
+           * It remains in IndexedDB and will be retried on the next save.
+           */
+        }
+      }
+
+      /*
+       * If this browser has no local rows for the product, keep the existing
+       * cloudPhotos list. A first-time admin session may not have hydrated
+       * Storage yet, and an empty IndexedDB must never erase cloud metadata.
+       *
+       * Once local rows exist, they become the cache mirror of cloudPhotos:
+       * deleting a local photo then removes only its URL from the canonical
+       * product metadata.
+       */
+      const hasLocalRows=items.length>0;
+      const normalized=(hasLocalRows?urls:oldCloud).slice(0,MAX_PHOTOS);
+      const oldNormalized=oldCloud.slice(0,MAX_PHOTOS);
+
+      if(fingerprint(normalized)!==fingerprint(oldNormalized)){
+        p.cloudPhotos=normalized;
+        changed=true;
+      }else if(!Array.isArray(p.cloudPhotos)){
+        p.cloudPhotos=normalized;
+        changed=true;
+      }
+
+      /*
+       * Only replace image automatically when it was empty or was previously
+       * one of the cloud-managed product photos.
+       */
+      if(normalized.length && (!oldImage || oldCloud.includes(oldImage))){
+        if(p.image!==normalized[0]){
+          p.image=normalized[0];
+          changed=true;
+        }
+      }else if(hasLocalRows && !normalized.length && oldCloud.includes(oldImage) && p.image){
+        p.image='';
+        changed=true;
+      }
+    }
+
+    return {uploaded,changed};
+  }
+
+  async function hydratePhotos(){
+    try{
+      const main=read(STATE_KEY)||{};
+      const products=productArrays(main);
+      const local=await photoRows();
+      const known=new Set(local.map(x=>String(x?.cloudUrl||'')).filter(Boolean));
+      let added=0;
+
+      for(let i=0;i<products.length;i++){
+        const p=products[i];
+        const pid=pidOf(p,i);
+        const urls=Array.isArray(p?.cloudPhotos)?p.cloudPhotos.filter(Boolean).slice(0,MAX_PHOTOS):[];
+        for(let n=0;n<urls.length;n++){
+          const url=String(urls[n]);
+          if(!url||known.has(url))continue;
+          try{
+            const r=await fetch(url,{cache:'no-store'});
+            if(!r.ok)continue;
+            const blob=await r.blob();
+            await (async()=>{
+              const db=await openPhotoDB();
+              try{
+                await new Promise((resolve,reject)=>{
+                  const req=db.transaction(PHOTO_STORE,'readwrite').objectStore(PHOTO_STORE).add({
+                    pid,
+                    name:'cloud-'+(n+1),
+                    type:blob.type||'image/jpeg',
+                    blob,
+                    created:Date.now()+n,
+                    cloudUrl:url
+                  });
+                  req.onsuccess=()=>resolve();
+                  req.onerror=()=>reject(req.error);
+                });
+              }finally{db.close()}
+            })();
+            known.add(url);
+            added++;
+          }catch(e){
+            console.warn('[FlorEla Cloud Photos] hydrate item failed',url,e);
+          }
+        }
+      }
+
+      if(added)dispatchAll();
+      return added;
+    }catch(e){
+      console.warn('[FlorEla Cloud Photos] hydrate failed',e);
+      return 0;
+    }
+  }
+
+  async function fetchCloud(){
+    const r=await fetch(ENDPOINT,{
+      method:'GET',
+      cache:'no-store',
+      headers:{Accept:'application/json'}
+    });
+    if(!r.ok)throw new Error('GET '+r.status);
+    return await r.json();
+  }
+
+  function mergeLocalOnly(cloudMain,localMain){
+    const out=clone(cloudMain||{});
+    for(const key of ['products','collabIndependentProducts']){
+      const cp=Array.isArray(out?.[key])?out[key]:[];
+      const lp=Array.isArray(localMain?.[key])?localMain[key]:[];
+      const ids=new Set(cp.map((p,i)=>pidOf(p,i)));
+      for(let i=0;i<lp.length;i++){
+        const p=lp[i];
+        if(!p)continue;
+        const id=pidOf(p,i);
+        if(!ids.has(id)){
+          cp.push(clone(p));
+          ids.add(id);
+        }
+      }
+      out[key]=cp;
+    }
+    return out;
+  }
+
+  function localOnlyCount(cloudMain,localMain){
+    let n=0;
+    for(const key of ['products','collabIndependentProducts']){
+      const c=new Set((Array.isArray(cloudMain?.[key])?cloudMain[key]:[]).map((p,i)=>pidOf(p,i)));
+      for(let i=0;i<(Array.isArray(localMain?.[key])?localMain[key]:[]).length;i++){
+        const id=pidOf(localMain[key][i],i);
+        if(!c.has(id))n++;
+      }
+    }
+    return n;
+  }
+
+  function shouldReload(fp){
+    try{return sessionStorage.getItem(RELOAD_KEY)!==fp}
+    catch(e){return true}
+  }
+
+  function markReload(fp){
+    try{sessionStorage.setItem(RELOAD_KEY,fp)}catch(e){}
+  }
+
+  function clearReloadMarker(){
+    try{sessionStorage.removeItem(RELOAD_KEY)}catch(e){}
+  }
+
+  function applyState(snapshot){
+    suppressStorageHook=true;
+    try{
+      write(STATE_KEY,snapshot?.main||{});
+      if(snapshot?.extra!=null)write(EXTRA_KEY,snapshot.extra);
+      window.__florelaAdminProducts=(snapshot?.main?.products)||[];
+      window.florelaAdminV2Data=snapshot?.main||{};
+    }finally{suppressStorageHook=false}
+  }
+
+  async function safePush(reason){
+    if(!cloudReady||!unlocked()||syncing){
+      if(syncing)pendingPush=true;
+      return false;
+    }
+
+    let sec=secret();
+    if(!sec){
+      sec=prompt('FlorEla ☁️\n\nEscribe el valor de FLORELA_SYNC_SECRET de Supabase.\n\nNo lo compartas con nadie.');
+      if(!sec)return false;
+      setSecret(sec);
+    }
+
+    const snap=localSnapshot();
+    if(!useful(snap.main))return false;
+
+    /*
+     * Safety rule:
+     * If this browser has an empty catalog and the last known cloud has
+     * products, never even attempt the destructive POST.
+     * The Edge Function V6 also protects this with HTTP 409.
+     */
+    if(productCount(snap.main)===0 && productCount(lastCloud?.data?.main)>0){
+      notify('florelaCloudSyncStatus','Se bloqueó un guardado vacío para proteger el catálogo de la nube.',false);
+      return false;
+    }
+
+    syncing=true;
+    try{
+      const photoResult=await syncLocalPhotos(snap.main);
+
+      if(photoResult.changed){
+        write(STATE_KEY,snap.main);
+      }
+
+      const latest=localSnapshot();
+      let lastErr=null;
+
+      for(let attempt=0;attempt<3;attempt++){
+        try{
+          const r=await fetch(ENDPOINT,{
+            method:'POST',
+            headers:{
+              'Content-Type':'application/json',
+              Accept:'application/json',
+              'x-florela-admin':sec
+            },
+            body:JSON.stringify({data:latest}),
+            cache:'no-store'
+          });
+
+          const j=await r.json().catch(()=>({}));
+
+          if(r.status===409){
+            /*
+             * V6 means the server rejected a potentially destructive/stale
+             * catalog. Never retry the same payload. Pull the canonical cloud
+             * state instead.
+             */
+            let fresh=null;
+            try{fresh=await fetchCloud()}catch(e){}
+            const fm=fresh?.data?.main;
+            if(useful(fm) && productCount(latest.main)===0){
+              applyState(fresh.data);
+              lastCloud=fresh;
+              notify('florelaCloudSyncStatus','La nube tenía productos; se restauró el catálogo y se bloqueó el borrado.',false);
+              clearReloadMarker();
+              setTimeout(()=>location.reload(),80);
+              return false;
+            }
+            throw new Error(j?.error||'HTTP 409');
+          }
+
+          if(!r.ok||j?.ok===false){
+            throw new Error(j?.error||('HTTP '+r.status));
+          }
+
+          lastCloud={data:clone(latest)};
+          notify('florelaCloudSyncStatus','Cambios guardados en la nube ✓',true);
+          if(photoResult.uploaded){
+            notify('florelaCloudPhotoStatus','Fotos sincronizadas en la nube ✓ ('+photoResult.uploaded+')',true);
+          }
+          return true;
+        }catch(e){
+          lastErr=e;
+          if(attempt<2)await new Promise(r=>setTimeout(r,700*(attempt+1)));
+        }
+      }
+
+      throw lastErr||new Error('Sin respuesta');
+    }catch(e){
+      console.warn('[FlorEla Cloud] push failed',e);
+      notify('florelaCloudSyncStatus','No se pudo sincronizar; los datos permanecen localmente y se reintentará.',false);
+      return false;
+    }finally{
+      syncing=false;
+      if(pendingPush){
+        pendingPush=false;
+        queuePush('pending');
+      }
+    }
+  }
+
+  function queuePush(reason){
+    if(!cloudReady||!unlocked())return;
+    clearTimeout(pushTimer);
+    pushTimer=setTimeout(()=>safePush(reason),900);
+  }
+
+  async function bootstrap(){
+    if(booted)return;
+    booted=true;
+
+    const bootLocal=clone(localSnapshot());
+    try{
+      write(BOOT_LOCAL_KEY,bootLocal);
+    }catch(e){}
+
+    let cloud=null;
+    try{
+      cloud=await fetchCloud();
+      lastCloud=cloud;
+    }catch(e){
+      console.warn('[FlorEla Cloud] GET failed',e);
+      /*
+       * No cloud read = no cloud write.
+       * This is a key root-safety rule.
+       */
+      cloudReady=false;
+      return;
+    }
+
+    const cm=cloud?.data?.main&&typeof cloud.data.main==='object'?cloud.data.main:{};
+    const ce=cloud?.data?.extra;
+    const local=bootLocal.main||{};
+    const admin=unlocked();
+
+    let chosen;
+
+    if(admin && useful(local) && !useful(cm)){
+      /*
+       * Recovery mode: cloud has no usable catalog, but the admin browser
+       * has a real local catalog. Preserve it and establish the cloud copy.
+       */
+      chosen={
+        main:clone(local),
+        extra:ce!=null?ce:(bootLocal.extra||null)
+      };
+      notify('florelaCloudSyncStatus','La nube no tenía un estado utilizable; se conservaron los datos locales del administrador.',true);
+    }else if(admin && useful(cm)){
+      /*
+       * Cloud wins for IDs that already exist there.
+       * Only local-only products are merged so an unsynced creation is not lost.
+       */
+      const mergedMain=mergeLocalOnly(cm,local);
+      chosen={
+        main:mergedMain,
+        extra:ce!=null?ce:(bootLocal.extra||null)
+      };
+      if(localOnlyCount(cm,local)>0){
+        notify('florelaCloudSyncStatus','Se detectaron productos locales que aún no estaban en la nube; se conservarán y se sincronizarán.',true);
+      }
+    }else{
+      /*
+       * Public/locked browser: cloud is authoritative.
+       * Local cache must never overwrite Supabase.
+       */
+      chosen={
+        main:clone(cm),
+        extra:ce!=null?ce:null
+      };
+    }
+
+    const chosenFp=fingerprint(chosen);
+
+    /*
+     * Apply the canonical choice before any other engine can be trusted.
+     */
+    applyState(chosen);
+    cloudReady=true;
+
+    /*
+     * Admin: upload local photos first, then save the resulting product
+     * metadata. This closes the old "photo exists in IndexedDB but not in
+     * Storage/cloudPhotos" gap.
+     */
+    if(admin){
+      try{
+        /*
+         * Mirror existing cloud photos into this browser first. This prevents
+         * an empty/new IndexedDB cache from being interpreted as "the user
+         * deleted all cloud photos".
+         */
+        await hydratePhotos();
+        const photoResult=await syncLocalPhotos(chosen.main);
+        if(photoResult.changed){
+          write(STATE_KEY,chosen.main);
+          chosen=localSnapshot();
+        }
+
+        const needsPush =
+          productCount(chosen.main)!==productCount(cm) ||
+          localOnlyCount(cm,chosen.main)>0 ||
+          photoResult.changed ||
+          fingerprint(chosen.main)!==fingerprint(cm);
+
+        if(needsPush){
+          await safePush('bootstrap');
+        }
+      }catch(e){
+        console.warn('[FlorEla Cloud] bootstrap photo sync failed',e);
+      }
+    }
+
+    /*
+     * Reload exactly once whenever the canonical state changed. This is not
+     * a workaround: it is the mechanism that resets every legacy closure
+     * (admin s, renderers, editors, etc.) so they all start from the same
+     * canonical state instead of keeping stale in-memory objects.
+     */
+    const finalSnap=localSnapshot();
+    const finalFp=fingerprint(finalSnap);
+
+    if(shouldReload(finalFp)){
+      markReload(finalFp);
+      setTimeout(()=>location.reload(),80);
+      return;
+    }
+
+    clearReloadMarker();
+    await hydratePhotos();
+    dispatchAll();
+
+    /*
+     * If admin was not unlocked during bootstrap, remember the local cache
+     * for the next explicit admin session but do not push anything.
+     */
+    if(!admin){
+      try{rawWrite(BOOT_LOCAL_KEY,bootLocal)}catch(e){}
+    }
+  }
+
+  function bind(){
+    document.addEventListener('click',e=>{
+      if(e.target.closest('#fv2Save,#fv2SaveProduct,#fv2SaveStore,#fv2SaveMedia,#flCollabSave')){
+        queuePush('admin-save');
+      }
+
+      /*
+       * Photo additions/deletions are asynchronous IndexedDB operations.
+       * A delayed queue gives those handlers time to finish before sync.
+       */
+      if(
+        e.target.closest('#fv2PickProductPhotos') ||
+        e.target.closest('[data-pdel]') ||
+        e.target.closest('[data-collab-photo-del]') ||
+        e.target.closest('#flCollabPickPhotos')
+      ){
+        queuePush('photo-action');
+      }
+    },true);
+
+    document.addEventListener('change',e=>{
+      if(e.target.closest('#flAdminV2'))queuePush('admin-change');
+      if(e.target.id==='fv2PPhotos'||e.target.id==='flCollabPhotos')queuePush('photo-change');
+    },true);
+
+    window.addEventListener('florela-products-updated',()=>queuePush('products-updated'));
+    window.addEventListener('florela-social-updated',()=>queuePush('social-updated'));
+    window.addEventListener('florela-collab-updated',()=>queuePush('collab-updated'));
+    window.addEventListener('florela-appearance-updated',()=>queuePush('appearance-updated'));
+
+    window.addEventListener('online',()=>queuePush('online'));
+
+    /*
+     * The existing password gate does not emit an unlock event.
+     * Detect the transition without modifying the gate.
+     */
+    let wasUnlocked=unlocked();
+    setInterval(()=>{
+      const now=unlocked();
+      if(now&&!wasUnlocked){
+        queuePush('admin-unlocked');
+        setTimeout(async()=>{
+          if(!cloudReady)return;
+          try{
+            const snap=localSnapshot();
+            const photoResult=await syncLocalPhotos(snap.main);
+            if(photoResult.changed)write(STATE_KEY,snap.main);
+            if(photoResult.changed)await safePush('unlock-photo-sync');
+            await hydratePhotos();
+            dispatchAll();
+          }catch(e){console.warn('[FlorEla Cloud] unlock sync failed',e)}
+        },250);
+      }
+      wasUnlocked=now;
+    },500);
+  }
+
+  function start(){
+    installStorageHook();
+    bind();
+    bootstrap();
+  }
+
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',start,{once:true});
+  }else{
+    start();
+  }
+
+  window.addEventListener('load',()=>setTimeout(()=>{
+    if(!booted)bootstrap();
+  },50));
+
+  window.__florelaCloudSync={
+    pull:bootstrap,
+    push:()=>safePush('manual'),
+    schedulePush:()=>queuePush('manual'),
+    clearSecret:()=>{try{sessionStorage.removeItem(SECRET_KEY)}catch(e){}}
+  };
+
+  window.__florelaCloudPhotos={
+    migrate:async()=>{
+      if(!cloudReady||!unlocked())return 0;
+      const snap=localSnapshot();
+      const result=await syncLocalPhotos(snap.main);
+      if(result.changed)write(STATE_KEY,snap.main);
+      if(result.changed)await safePush('photo-manual');
+      return result.uploaded;
+    },
+    hydrate:hydratePhotos
+  };
+})();
+</script>
+
 <div aria-hidden="true" aria-label="Aviso de FlorEla" aria-modal="true" id="florelaFlashOverlay" role="dialog">
 <div class="florela-flash-modal">
 <button aria-label="Cerrar" class="florela-flash-close" id="florelaFlashClose" type="button">×</button>
@@ -3534,7 +4327,7 @@ Quisiera que me ayuden a encontrar una opción bonita para regalar. ✨
   flowers:true,flowerDuration:2600,flowerCount:11,
    favoritesEyebrow:"COLECCIÓN FLORELA",favoritesTitle:"Favoritos que",favoritesHighlight:"dan ganas de regalar.",favoritesProducts:[],favoritesOverrides:{} ,
   collabSectionEnabled:true,collabElamodaAvailable:true,collabProducts:[],collabIndependentProducts:[],collabElamodaUrl:"#",socialFacebook:"",socialInstagram:"",socialTikTok:"",collabSectionEyebrow:"FLORela × ELAMODA",collabSectionTitle:"Flores que se encuentran con la belleza.",collabSectionSubtitle:"Una selección especial de productos disponibles en ambas marcas.",collabSectionCta:"👋 Conoce más de Elamoda",giftFloatEnabled:true,giftFloatBrand:"FlorEla gift works",giftFloatSlogan:"Haz ese momento especial.",giftFloatTitle:"¡Hemos agregado más artículos a nuestros regalos!",giftFloatText:"Más opciones, más detalles y más formas de hacer especial cada regalo.",giftFloatCta:"Descubrir regalos",
-  momentsEyebrow:"¿Qué quieres provocar?",momentsTitle:"Descubre el momento perfecto.",momentsSubtitle:"Y nosotros ponemos el detalle.",moments:[
+  momentsEyebrow:"¿Qué quieres provocar?",momentsTitle:"Elige el momento.",momentsSubtitle:"Y nosotros ponemos el detalle.",moments:[
    {id:"all",icon:"✦",title:"Quiero sorprender",subtitle:"Ver todo",panelTitle:"Una selección para sorprender",panelSubtitle:"Detalles especiales que viven únicamente aquí.",products:[{icon:"🌷",title:"Mini ramo sorpresa",description:"Un detalle delicado para aparecer con flores cuando menos lo esperan.",tag:"Solo en este momento"},{icon:"🎁",title:"Caja FlorEla sorpresa",description:"Una composición pensada para regalar emoción desde que se abre.",tag:"Colección especial"},{icon:"💌",title:"Detalle con mensaje",description:"Flor eterna acompañada de un mensaje preparado para la ocasión.",tag:"Solo en este momento"}]},
    {id:"amor",icon:"♡",title:"Para enamorar",subtitle:"Detalles románticos",panelTitle:"Para enamorar",panelSubtitle:"Detalles románticos exclusivos de esta selección.",products:[{icon:"♡",title:"Ramo Te Elijo",description:"Una composición romántica creada para decir mucho sin palabras.",tag:"Exclusivo"},{icon:"🌹",title:"Flor para dos",description:"Un detalle íntimo para celebrar lo bonito de estar juntos.",tag:"Solo aquí"},{icon:"💌",title:"Carta + flor eterna",description:"Un pequeño recuerdo que combina una flor con un mensaje personal.",tag:"Colección romántica"}]},
    {id:"celebrar",icon:"✿",title:"Para celebrar",subtitle:"Momentos especiales",panelTitle:"Para celebrar",panelSubtitle:"Detalles pensados para convertir la ocasión en recuerdo.",products:[{icon:"✿",title:"Ramo ¡Felicidades!",description:"Flores eternas para acompañar cumpleaños, logros y buenas noticias.",tag:"Exclusivo"},{icon:"✨",title:"Celebración eterna",description:"Un arreglo especial para esos días que merecen ser recordados.",tag:"Solo aquí"},{icon:"🎀",title:"Detalle de celebración",description:"Una propuesta lista para entregar y hacer sonreír.",tag:"Colección especial"}]},
@@ -3608,7 +4401,7 @@ Quisiera que me ayuden a encontrar una opción bonita para regalar. ✨
    set("fv2WhatsApp",s.whatsapp||"");
    set("fv2WhatsAppMessage",s.whatsappMessage||"Hola FlorEla 🌷, quiero continuar con mi pedido:\n\n{pedido}\n\nTotal: {total}\n\nQuedo pendiente de confirmación. 💐");
    set("fv2MomentsEyebrow",s.momentsEyebrow||"¿Qué quieres provocar?");
-   set("fv2MomentsTitle",s.momentsTitle||"Descubre el momento perfecto.");
+   set("fv2MomentsTitle",s.momentsTitle||"Elige el momento.");
    set("fv2MomentsSubtitle",s.momentsSubtitle||"Y nosotros ponemos el detalle.");
    renderAll();
  }
@@ -3887,7 +4680,7 @@ document.addEventListener("input",function(e){
    s.whatsappMessage=$("fv2WhatsAppMessage")?.value||"Hola FlorEla 🌷, quiero continuar con mi pedido:\n\n{pedido}\n\nTotal: {total}\n\nQuedo pendiente de confirmación. 💐";
    const favChecks=Array.from(document.querySelectorAll('#fv2FavProductChoices input[data-favprod]:checked')); if(favChecks.length)s.favoritesProducts=favChecks.map(x=>x.dataset.favprod);
    s.momentsEyebrow=$("fv2MomentsEyebrow")?.value?.trim()||"¿Qué quieres provocar?";
-   s.momentsTitle=$("fv2MomentsTitle")?.value?.trim()||"Descubre el momento perfecto.";
+   s.momentsTitle=$("fv2MomentsTitle")?.value?.trim()||"Elige el momento.";
    s.momentsSubtitle=$("fv2MomentsSubtitle")?.value?.trim()||"Y nosotros ponemos el detalle.";
   s.images=($( "fv2Images").value||"").split(/\n+/).map(x=>x.trim()).filter(Boolean);
   s.bannerPhrases=Array.from({length:7},(_,i)=>$("fv2BannerPhrase"+(i+1))?.value?.trim()||"").filter(Boolean);
@@ -3910,7 +4703,7 @@ document.addEventListener("input",function(e){
    s.collabSectionEnabled=enabled;
    if(enabled) s.collabElamodaAvailable=true;
    if(sec) sec.on=enabled;
- } function save(){collect();syncCollabSectionState();s.favoritesOverrides=s.favoritesOverrides||{};const favChecks=Array.from(document.querySelectorAll("#fv2FavProductChoices input[data-favprod]:checked")); if(favChecks.length)s.favoritesProducts=favChecks.map(x=>x.dataset.favprod); window.__florelaAdminProducts=s.products; localStorage.setItem(K,JSON.stringify(s));window.__florelaSocialRender?.();window.dispatchEvent(new Event("florela-social-updated"));updatePresentationContent();applyBuilderToStore();applyBannerPhrases();window.__florelaRenderCatalog?.();window.__florelaGiftWorksRender?.();window.__florelaCollabRender?.();window.__florelaRenderCollabSection?.();window.__florelaApplyBuilderVisibility?.();window.dispatchEvent(new Event("florela-collab-updated"));try{setTimeout(()=>window.__florelaV17SaveNow?.(),50)}catch(e){}toast("✓ Cambios guardados correctamente");}
+ } function save(){collect();syncCollabSectionState();s.favoritesOverrides=s.favoritesOverrides||{};const favChecks=Array.from(document.querySelectorAll("#fv2FavProductChoices input[data-favprod]:checked")); if(favChecks.length)s.favoritesProducts=favChecks.map(x=>x.dataset.favprod); window.__florelaAdminProducts=s.products; localStorage.setItem(K,JSON.stringify(s));window.__florelaSocialRender?.();window.dispatchEvent(new Event("florela-social-updated"));updatePresentationContent();applyBuilderToStore();applyBannerPhrases();window.__florelaRenderCatalog?.();window.__florelaGiftWorksRender?.();window.__florelaCollabRender?.();window.__florelaRenderCollabSection?.();window.__florelaApplyBuilderVisibility?.();window.dispatchEvent(new Event("florela-collab-updated"));toast("✓ Cambios guardados correctamente");}
  
 function applyConstructorToStore(){
   const sectionMap = {
@@ -4288,9 +5081,64 @@ document.addEventListener("click",function(e){
 })();
 </script><script>document.addEventListener("DOMContentLoaded",()=>setTimeout(()=>window.florelaBuilder&&window.florelaBuilder.apply(),100));</script>
 <script id="florela-persistence-fix-v73">
-/* V8: DESACTIVADO. La fuente única de verdad es Supabase.
-   No restaurar florelaAdminV2Data desde localStorage/IndexedDB porque puede
-   reinyectar una copia vieja y pisar la información recién cargada de la nube. */
+(function(){
+  const KEY='florelaAdminV2Data';
+  const DB='FlorElaAdminPersistenceDB';
+  const STORE='config';
+  function db(){return new Promise((resolve,reject)=>{try{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'});};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);}catch(e){reject(e)}})}
+  async function idbGet(){try{const d=await db();return await new Promise((res,rej)=>{const r=d.transaction(STORE,'readonly').objectStore(STORE).get('main');r.onsuccess=()=>res(r.result?r.result.value:null);r.onerror=()=>rej(r.error)})}catch(e){return null}}
+  async function idbSet(v){try{const d=await db();await new Promise((res,rej)=>{const r=d.transaction(STORE,'readwrite').objectStore(STORE).put({id:'main',value:v});r.onsuccess=()=>res();r.onerror=()=>rej(r.error)});return true}catch(e){return false}}
+  function lsGet(){try{return JSON.parse(localStorage.getItem(KEY)||'null')}catch(e){return null}}
+  function lsSet(v){try{localStorage.setItem(KEY,JSON.stringify(v));return true}catch(e){return false}}
+  async function restore(){
+    const a=lsGet(), b=await idbGet();
+    const data=a||b;
+    if(data) lsSet(data);
+    return data;
+  }
+  async function capture(){
+    const old=lsGet()||{};
+    const q=id=>document.getElementById(id);
+    const n=(id,def)=>q(id)?Number(q(id).value):def;
+    const v=(id,def)=>q(id)?q(id).value:def;
+    const data=Object.assign({},old,{
+      speed:n('fv2Speed',old.speed||5),height:n('fv2Height',old.height||430),
+      primary:v('fv2Primary',old.primary||'#b82f35'),secondary:v('fv2Secondary',old.secondary||'#f8e9e9'),
+      bg:v('fv2Bg',old.bg||'#fbf3e9'),text:v('fv2Text',old.text||'#2d2927'),
+      headFont:v('fv2HeadFont',old.headFont||'Georgia'),bodyFont:v('fv2BodyFont',old.bodyFont||'Arial'),
+      base:n('fv2Base',old.base||16),radius:n('fv2Radius',old.radius||18),
+      footerBrand:v('fv2FooterBrand',old.footerBrand||'FlorEla'),footerText:v('fv2FooterText',old.footerText||''),
+      heroTitle:v('fv2HeroTitle',old.heroTitle||''),heroSub:v('fv2HeroSub',old.heroSub||''),
+      presentationTitle:v('fv2PresentationTitle',old.presentationTitle||''),presentationSlogan:v('fv2PresentationSlogan',old.presentationSlogan||''),
+      productsTitle:v('fv2ProductsTitle',old.productsTitle||''),
+      shipText:v('fv2ShipText',old.shipText||''),terms:v('fv2Terms',old.terms||''),returns:v('fv2Returns',old.returns||''),privacy:v('fv2Privacy',old.privacy||''),payments:v('fv2Payments',old.payments||''),faq:v('fv2Faq',old.faq||''),
+      addMsg:v('fv2AddMsg',old.addMsg||''),favMsg:v('fv2FavMsg',old.favMsg||''),flowerDuration:n('fv2FlowerDuration',old.flowerDuration||2600),flowerCount:n('fv2FlowerCount',old.flowerCount||11),
+      cart:q('fv2Cart')?q('fv2Cart').checked:old.cart!==false,fav:q('fv2Fav')?q('fv2Fav').checked:old.fav!==false,flowers:q('fv2Flowers')?q('fv2Flowers').checked:old.flowers!==false,
+      images:q('fv2Images')?(q('fv2Images').value||'').split(/\n+/).map(x=>x.trim()).filter(Boolean):(old.images||[]),
+      bannerPhrases:Array.from({length:7},(_,i)=>q('fv2BannerPhrase'+(i+1))?.value?.trim()||'').filter(Boolean)
+    });
+    lsSet(data); await idbSet(data); return data;
+  }
+  async function boot(){
+    await restore();
+    const original=window.florElaOpenAdminV2;
+    if(original){
+      window.florElaOpenAdminV2=async function(){await restore();original();};
+    }
+    document.addEventListener('click',function(e){
+      const b=e.target.closest('#fv2Save');
+      if(b){setTimeout(()=>capture(),30)}
+    },true);
+    document.addEventListener('click',function(e){
+      const b=e.target.closest('#fv2BackStore,#fv2SaveStore');
+      if(b){capture()}
+    },true);
+    document.addEventListener('change',function(e){
+      if(e.target.matches('[data-secname],[data-cati],[data-menui]'))setTimeout(()=>capture(),20);
+    });
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
+})();
 </script>
 <script id="florela-v77-banner-media-engine">
 (function(){
@@ -5152,13 +6000,13 @@ document.addEventListener("touchstart",function(e){
  ];
  const esc=v=>String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;", "'":"&#39;"}[m]));
  function get(){try{return JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){return {}}}
- function data(){const d=get();return {eyebrow:d.momentsEyebrow||"¿Qué quieres provocar?",title:d.momentsTitle||"Descubre el momento perfecto.",subtitle:d.momentsSubtitle||"Y nosotros ponemos el detalle.",moments:Array.isArray(d.moments)&&d.moments.length?d.moments:fallback}}
+ function data(){const d=get();return {eyebrow:d.momentsEyebrow||"¿Qué quieres provocar?",title:d.momentsTitle||"Elige el momento.",subtitle:d.momentsSubtitle||"Y nosotros ponemos el detalle.",moments:Array.isArray(d.moments)&&d.moments.length?d.moments:fallback}}
  function render(){
   const sec=document.querySelector(".discover#descubre")||document.querySelector("#descubre"); if(!sec)return;
   const d=data(), head=sec.querySelector(".section-head");
   if(head){const eb=head.querySelector(".eyebrow"),h=head.querySelector("h2"),p=head.querySelector("p");if(eb)eb.textContent=d.eyebrow;if(h)h.textContent=d.title;if(p)p.textContent=d.subtitle;}
   const grid=sec.querySelector(".moment-grid"), wrap=sec.querySelector("#momentSpecialWrap"); if(!grid||!wrap)return;
-  grid.innerHTML='<div class="moment-dropdown-wrap"><select class="moment-dropdown" id="florelaMomentSelect" aria-label="Descubre el momento perfecto">'+d.moments.map((m,i)=>'<option value="'+esc(m.id||('moment'+i))+'">'+esc((m.icon?m.icon+' ':'')+(m.title||"Momento"))+(m.subtitle?' — '+esc(m.subtitle):'')+'</option>').join('')+'</select></div>';
+  grid.innerHTML='<div class="moment-dropdown-wrap"><select class="moment-dropdown" id="florelaMomentSelect" aria-label="Elige el momento">'+d.moments.map((m,i)=>'<option value="'+esc(m.id||('moment'+i))+'">'+esc((m.icon?m.icon+' ':'')+(m.title||"Momento"))+(m.subtitle?' — '+esc(m.subtitle):'')+'</option>').join('')+'</select></div>';
   wrap.innerHTML=d.moments.map((m,i)=>'<div class="moment-special-panel'+(i===0?' open':'')+'" data-moment-panel="'+esc(m.id||('moment'+i))+'"><div class="moment-special-head"><div><strong>'+esc(m.panelTitle||m.title||"Momento")+'</strong><small>'+esc(m.panelSubtitle||"")+'</small></div><button class="moment-special-close" type="button" aria-label="Cerrar">×</button></div><div class="moment-special-photos" data-moment-public-photos="'+esc(m.id||('moment'+i))+'"></div><div class="moment-special-products">'+((Array.isArray(m.products)?m.products:[]).map(x=>'<article class="moment-special-product"><div class="icon">'+esc(x.icon||"🌷")+'</div><h4>'+esc(x.title||"Detalle especial")+'</h4><p>'+esc(x.description||"")+'</p>'+(x.tag?'<span class="special-tag">'+esc(x.tag)+'</span>':'')+'</article>').join("")||'<div style="grid-column:1/-1;padding:12px;color:#8b7b77;font-size:12px">Próximamente habrá detalles especiales para este momento.</div>')+'</div></div>').join("");
  }
  function openMoment(key){const sec=document.querySelector("#descubre");if(!sec)return;sec.querySelectorAll(".moment-special-panel").forEach(p=>p.classList.toggle("open",p.dataset.momentPanel===key));const select=sec.querySelector("#florelaMomentSelect");if(select&&select.value!==key)select.value=key;}
@@ -6926,7 +7774,7 @@ header .header-actions{
  window.addEventListener('florela-collab-updated',()=>setTimeout(()=>{renderFavorites();filterCatalog();window.__florelaRenderCollabSection?.();},100));
  const cg=document.getElementById('florelaPublicCatalogGrid');if(cg)new MutationObserver(()=>{clearTimeout(window.__flO4Final);window.__flO4Final=setTimeout(filterCatalog,40)}).observe(cg,{childList:true});
  const cl=document.getElementById('florelaCollabProductGrid');if(cl)new MutationObserver(()=>{clearTimeout(window.__flO4Col);window.__flO4Col=setTimeout(filterCollabDom,40)}).observe(cl,{childList:true});
- document.addEventListener('click',e=>{const b=e.target.closest('#favoritos .florela-fav-read-more');if(!b)return;e.preventDefault();e.stopPropagation();const wrap=b.closest('.florela-fav-desc-wrap');const p=wrap?.querySelector('.florela-fav-desc');if(!p)return;const col=p.classList.toggle('collapsed');b.textContent=col?'Leer más':'Leer menos';b.setAttribute('aria-expanded',String(!col));b.setAttribute('aria-label',col?'Mostrar descripción completa':'Ocultar descripción');});
+ document.addEventListener('click',e=>{const b=e.target.closest('#favoritos .florela-fav-read-more');if(!b)return;const p=b.closest('.florela-fav-desc-wrap')?.querySelector('.florela-fav-desc');if(!p)return;const col=p.classList.toggle('collapsed');b.textContent=col?'Leer más':'Leer menos';b.setAttribute('aria-expanded',String(!col));});
  setInterval(()=>{syncFlags(read());filterCatalog();filterCollabDom();},1200);
 })();
 </script>
@@ -7549,15 +8397,7 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
   function unlock(){
     const i=document.getElementById('florelaAdminPasswordInput'), e=document.getElementById('florelaAdminPasswordError');
     if(!i)return false;
-    if(i.value===PASSWORD){
-      try{
-        sessionStorage.setItem(SESSION_KEY,'1');
-        /* La contraseña del administrador también habilita la autenticación
-           de sincronización del mismo proyecto. No se envía ni se muestra aquí. */
-      }catch(x){}
-      try{window.dispatchEvent(new Event('florela-admin-unlocked'))}catch(x){}
-      closeGate(); return true
-    }
+    if(i.value===PASSWORD){try{sessionStorage.setItem(SESSION_KEY,'1')}catch(x){} closeGate(); return true}
     if(e)e.textContent='Contraseña incorrecta. Inténtalo de nuevo.';
     i.select(); return false;
   }
@@ -7607,12 +8447,7 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
 
 
 <!-- FLORELA CLOUD CORE v2: authoritative sync + durable product photos -->
-<style id="florela-cloud-core-v2-ui">
-#florelaCloudSyncStatus,#florelaCloudPhotoStatus{position:fixed;z-index:999999;max-width:360px;padding:11px 14px;border:1px solid #ead8d2;border-radius:14px;background:rgba(255,250,247,.97);box-shadow:0 10px 30px rgba(60,30,30,.14);font:700 12px Arial,sans-serif;color:#7f2734;display:none}
-#florelaCloudSyncStatus{right:16px;bottom:16px}#florelaCloudPhotoStatus{left:16px;bottom:16px}
-#florelaCloudSyncStatus.show,#florelaCloudPhotoStatus.show{display:block}
-</style>
-<!-- V13 disabled legacy sync: florela-cloud-core-v2 -->
+
 
 <style id="florela-admin-mobile-app-css">
 /* Administrador móvil: diseño tipo app, sin perder ninguna opción */
@@ -7978,16 +8813,7 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
  const KEY='florelaAdminV2Data', FALLBACK='Consultar tiempo estimado';
  let renderSeq=0, scheduled=0, running=false, rerun=false;
  const $=id=>document.getElementById(id);
- function read(){
-   try{
-     if(!window.__florelaAdminPublicPage && !sessionStorage.getItem('florelaAdminUnlocked')){}
-   }catch(e){}
-   try{
-     const cloud=window.__florelaCloudMain;
-     if(cloud&&typeof cloud==='object'&&Array.isArray(cloud.products)) return cloud;
-   }catch(e){}
-   try{const d=JSON.parse(localStorage.getItem(KEY)||'{}');return d&&typeof d==='object'?d:{}}catch(e){return {}}
- }
+ function read(){try{const d=JSON.parse(localStorage.getItem(KEY)||'{}');return d&&typeof d==='object'?d:{}}catch(e){return {}}}
  function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
  function money(v){return Number(v||0).toLocaleString('es-MX',{style:'currency',currency:'MXN'})}
  function visible(p){
@@ -8053,677 +8879,5 @@ window.__florelaIntegrityCheck=()=>{apply();collab();window.__florelaRenderCatal
 #florelaCloudSyncStatus{position:fixed;right:16px;bottom:16px;z-index:999999;max-width:330px;padding:11px 14px;border:1px solid #ead8d2;border-radius:14px;background:rgba(255,250,247,.97);box-shadow:0 10px 30px rgba(60,30,30,.14);font:700 12px Arial,sans-serif;color:#7f2734;display:none}
 #florelaCloudSyncStatus.show{display:block}
 </style>
-<style id="florela-favorites-readmore-ultra-fix">
-#favoritos .florela-fav-desc-wrap{display:block!important;width:100%!important}
-#favoritos .florela-fav-desc.collapsed{display:-webkit-box!important;display:-moz-box!important;display:box!important;-webkit-box-orient:vertical!important;-webkit-line-clamp:3!important;overflow:hidden!important;max-height:4.8em!important}
-#favoritos .florela-fav-desc:not(.collapsed){display:block!important;max-height:none!important;overflow:visible!important}
-#favoritos .florela-fav-read-more{position:relative!important;z-index:5!important;display:inline-block!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;cursor:pointer!important}
-</style>
-<style id="florela-prep-single-only-final">
-/* Un solo texto de preparación por artículo: conserva el del motor autoritativo del catálogo. */
-#florelaPublicCatalogGrid .sample-product .florela-product-prep-badge{display:none!important}
-#florelaPublicCatalogGrid .sample-product .florela-product-meta .florela-prep-pill{display:none!important}
-</style>
-<style id="florela-prep-single-only-absolute">
-/* CORRECCIÓN FINAL: en el catálogo público solo se muestra UNA preparación por artículo.
-   Conservamos la preparación del renderizador autoritativo (.florela-catalog-prep).
-   No se eliminan otros datos como color. */
-#florelaPublicCatalogGrid .florela-product-prep-badge{display:none!important}
-#florelaPublicCatalogGrid .florela-prep-pill{display:none!important}
-#florelaPublicCatalogGrid .florela-catalog-prep{display:block!important}
-</style>
-<style id="florela-final-card-fixes-v3">
-/* PRODUCCIÓN FINAL: una sola preparación + Leer más funcional.
-   Solo afecta tarjetas públicas del catálogo. */
-#florelaPublicCatalogGrid .florela-final-prep{display:block!important;margin-top:8px!important;font-size:11px!important;line-height:1.35!important;color:#8f303b!important;font-weight:700!important}
-#florelaPublicCatalogGrid .florela-final-desc.collapsed{display:-webkit-box!important;-webkit-box-orient:vertical!important;-webkit-line-clamp:3!important;overflow:hidden!important;max-height:4.8em!important}
-#florelaPublicCatalogGrid .florela-final-desc:not(.collapsed){display:block!important;max-height:none!important;overflow:visible!important}
-#florelaPublicCatalogGrid .florela-final-readmore{display:inline-block!important;border:0!important;background:none!important;padding:0!important;margin:5px 0 0!important;color:#8f303b!important;font:700 12px Arial,sans-serif!important;cursor:pointer!important;text-decoration:underline!important;visibility:visible!important;opacity:1!important;pointer-events:auto!important;position:relative!important;z-index:20!important}
-</style>
-<script id="florela-final-card-fixes-v3">
-(function(){
- 'use strict';
- const GRID='florelaPublicCatalogGrid';
- const PREP_RE=/^\s*(?:⏱️\s*)?Preparación\s*:/i;
- function normalizeCard(card){
-   if(!card || !card.matches('.sample-product')) return;
-
-   /* 1) Detecta TODOS los elementos de preparación, incluso si otro motor
-         los generó con una clase distinta. Conserva solo uno. */
-   const candidates=[...card.querySelectorAll('*')].filter(el=>{
-     if(el.children.length>0) return false;
-     const t=(el.textContent||'').trim();
-     return PREP_RE.test(t);
-   });
-
-   let keep=candidates.find(el=>el.classList.contains('florela-catalog-prep')) || candidates[0] || null;
-
-   candidates.forEach(el=>{
-     if(el===keep) return;
-     el.remove();
-   });
-
-   if(keep){
-     const raw=(keep.textContent||'').trim();
-     const m=raw.match(/Preparación\s*:\s*(.*)$/i);
-     const value=(m?m[1]:raw).replace(/^⏱️\s*/,'').trim() || 'Consultar tiempo estimado';
-     keep.classList.add('florela-final-prep');
-     keep.textContent='⏱️ Preparación: '+value;
-   }
-
-   /* 2) Descripción + botón con delegación global para que ningún rerender
-         rompa el clic. */
-   const desc=card.querySelector('.sample-info > p');
-   if(!desc) return;
-
-   const text=desc.textContent||'';
-   const needs=text.length>150 || text.includes('\n');
-   if(!needs){
-     desc.classList.remove('florela-final-desc','collapsed');
-     card.querySelectorAll('.florela-final-readmore').forEach(b=>b.remove());
-     return;
-   }
-
-   desc.classList.add('florela-final-desc','collapsed');
-   let btn=card.querySelector('.florela-final-readmore');
-   if(!btn){
-     btn=document.createElement('button');
-     btn.type='button';
-     btn.className='florela-final-readmore';
-     btn.textContent='Leer más';
-     btn.setAttribute('aria-expanded','false');
-     desc.insertAdjacentElement('afterend',btn);
-   }
- }
-
- function fixAll(){
-   const grid=document.getElementById(GRID);
-   if(!grid) return;
-   grid.querySelectorAll('.sample-product').forEach(normalizeCard);
- }
-
- let timer=0;
- function schedule(){
-   clearTimeout(timer);
-   timer=setTimeout(fixAll,50);
- }
-
- document.addEventListener('click',function(e){
-   const btn=e.target.closest('#'+GRID+' .florela-final-readmore');
-   if(!btn) return;
-   e.preventDefault();
-   e.stopPropagation();
-   const card=btn.closest('.sample-product');
-   const desc=card && card.querySelector('.sample-info > p');
-   if(!desc) return;
-   const collapsed=desc.classList.toggle('collapsed');
-   btn.textContent=collapsed?'Leer más':'Leer menos';
-   btn.setAttribute('aria-expanded',String(!collapsed));
- },true);
-
- window.addEventListener('load',()=>setTimeout(fixAll,150));
- window.addEventListener('florela-products-updated',schedule);
- new MutationObserver(schedule).observe(document.body,{childList:true,subtree:true});
- schedule();
-})();
-</script>
-
-<script id="florela-final-prep-watchdog">
-(function(){
- 'use strict';
- const GRID='florelaPublicCatalogGrid';
- const RE=/^\s*(?:⏱️\s*)?Preparación\s*:/i;
- let busy=false;
- function run(){
-   if(busy)return; busy=true;
-   try{
-     const grid=document.getElementById(GRID);
-     if(!grid)return;
-     grid.querySelectorAll('.sample-product').forEach(card=>{
-       const els=[...card.querySelectorAll('*')].filter(el=>{
-         if(el.children.length>0)return false;
-         return RE.test((el.textContent||'').trim());
-       });
-       const keep=els.find(el=>el.classList.contains('florela-final-prep')) || els.find(el=>el.classList.contains('florela-catalog-prep')) || els[0];
-       els.forEach(el=>{if(el!==keep)el.remove();});
-     });
-   }finally{busy=false;}
- }
- new MutationObserver(run).observe(document.body,{subtree:true,childList:true});
- window.addEventListener('load',()=>setTimeout(run,300));
-})();
-</script>
-<!-- V13 disabled legacy sync: florela-cloud-authoritative-public-v7 -->
-<!-- V13 disabled legacy sync: florela-cloud-save-watchdog-v8 -->
-
-<!-- V13 disabled legacy sync: florela-public-state-lock-v9 -->
-<!-- V13 disabled legacy sync: florela-public-cloud-rehydrate-v10 -->
-
-
-<!-- FLORELA PUBLIC CLOUD SOURCE OF TRUTH V12 -->
-<script id="florela-public-supabase-direct-v18">
-/* Disabled in V5: replaced by the single canonical cloud loader below. */
-</script>
-
-<!-- FLORELA V25 PUBLIC CLOUD LOCK: si Supabase confirma products=[], el catálogo público DEBE quedar vacío. -->
-<script id="florela-public-cloud-empty-guard-v25">
-(function(){
- 'use strict';
- const GRID='florelaPublicCatalogGrid', EMPTY='florelaPublicCatalogEmpty';
- let timer=0, observer=null, applying=false;
- function adminUnlocked(){try{return sessionStorage.getItem('florelaAdminUnlocked')==='1'}catch(e){return false}}
- function cloudProducts(){
-   try{
-     if(window.__florelaCloudStateLoaded===true){
-       const d=window.__florelaCloudMain;
-       return d&&Array.isArray(d.products)?d.products:null;
-     }
-   }catch(e){}
-   return null;
- }
- function clearIfAuthoritativeEmpty(){
-   if(adminUnlocked()) return;
-   const products=cloudProducts();
-   if(!Array.isArray(products) || products.length!==0) return;
-   const grid=document.getElementById(GRID);
-   const empty=document.getElementById(EMPTY);
-   if(!grid) return;
-   if(!applying){
-     applying=true;
-     try{
-       if(grid.childElementCount) grid.replaceChildren();
-       grid.removeAttribute('data-florela-stale');
-       if(empty) empty.style.display='block';
-     }finally{applying=false}
-   }
- }
- function schedule(){
-   clearTimeout(timer);
-   timer=setTimeout(clearIfAuthoritativeEmpty,0);
- }
- window.__florelaPublicCloudV25={clearIfAuthoritativeEmpty,schedule};
- window.addEventListener('florela-products-updated',schedule);
- window.addEventListener('load',()=>setTimeout(clearIfAuthoritativeEmpty,0));
- window.addEventListener('pageshow',()=>setTimeout(clearIfAuthoritativeEmpty,0));
- document.addEventListener('visibilitychange',()=>{if(!document.hidden)schedule()});
- function startObserver(){
-   const grid=document.getElementById(GRID);
-   if(!grid || observer) return;
-   observer=new MutationObserver(()=>{
-     if(!applying && Array.isArray(cloudProducts()) && cloudProducts().length===0) schedule();
-   });
-   observer.observe(grid,{childList:true,subtree:true});
-   clearIfAuthoritativeEmpty();
- }
- if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',startObserver,{once:true});
- else startObserver();
-})();
-</script>
-
-<!-- FLORELA V15 AUTHORITATIVE SAVE: botón Guardar -> Edge Function -> Supabase -->
-<script id="florela-v17-direct-supabase-save">
-(function(){
-  'use strict';
-  // FlorEla V17: Supabase directo. El administrador sigue usando su estado actual,
-  // pero el guardado real va directo al RPC de PostgreSQL. No depende de Edge Functions,
-  // watchdogs ni de detectar botones concretos.
-  const KEY='florelaAdminV2Data';
-  const EXTRA='florelaEditableTextsV2';
-  const REST='https://ouxqgwqolajtvcusckag.supabase.co/rest/v1/rpc/florela_save_state';
-  const SBKEY='sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e';
-  const TOKEN='florela-web-sync-v1';
-  let timer=0, busy=false, dirty=false, lastHash='';
-
-  function unlocked(){
-    try{return sessionStorage.getItem('florelaAdminUnlocked')==='1'}catch(e){return false}
-  }
-  function read(k,fallback){
-    try{const v=JSON.parse(localStorage.getItem(k)||'null');return v==null?fallback:v}catch(e){return fallback}
-  }
-  function snapshot(){
-    let main=read(KEY,{});
-    const extra=read(EXTRA,{});
-    /* Self-heal old clients that may still contain the cloud envelope.
-       Merge nested legacy data only for missing fields; current outer fields win. */
-    if(main && typeof main==='object' && main.main && typeof main.main==='object' && !Array.isArray(main.main)){
-      const nested=main.main;
-      main=Object.assign({},nested,main);
-      delete main.main;
-    }
-    /* V26: older builds could accidentally duplicate the editable-text envelope
-       inside main. Keep the canonical copy only in EXTRA. */
-    if(main && typeof main==='object' && Object.prototype.hasOwnProperty.call(main,'extra')){
-      if((!extra || typeof extra!=='object' || Array.isArray(extra)) && main.extra && typeof main.extra==='object' && !Array.isArray(main.extra)){
-        Object.assign(extra,main.extra);
-      }
-      delete main.extra;
-    }
-    try{localStorage.setItem(KEY,JSON.stringify(main));}catch(e){}
-    return {main:main&&typeof main==='object'?main:{},extra:extra&&typeof extra==='object'?extra:{}};
-  }
-  function hash(obj){
-    try{return JSON.stringify(obj)}catch(e){return String(Date.now())}
-  }
-  async function writeCloud(reason){
-    /* V3: the admin save flow itself is the authorization boundary.
-       Do not silently skip the cloud write because sessionStorage was lost or
-       because the admin gate and the persistence layer became out of sync. */
-    if(busy){dirty=true;return false}
-    busy=true; dirty=false;
-    const data=snapshot();
-    const h=hash(data);
-    if(h===lastHash){busy=false;return true}
-    try{
-      const r=await fetch(REST,{
-        method:'POST',
-        cache:'no-store',
-        headers:{
-          'apikey':SBKEY,
-          'Authorization':'Bearer '+SBKEY,
-          'Content-Type':'application/json',
-          'Accept':'application/json',
-          'Prefer':'return=representation'
-        },
-        body:JSON.stringify({p_id:'main',p_data:data,p_token:TOKEN})
-      });
-      const text=await r.text();
-      let j=null;try{j=JSON.parse(text)}catch(e){}
-      if(!r.ok) throw new Error((j&&j.message)||(j&&j.error)||text||('HTTP '+r.status));
-      if(j && j.ok===false) throw new Error(j.error||'Supabase rechazó el guardado');
-      lastHash=h;
-      window.dispatchEvent(new CustomEvent('florela-cloud-saved',{detail:{reason,updated_at:j?.updated_at||null}}));
-      return true;
-    }catch(e){
-      console.error('[FlorEla V17] Error guardando en Supabase:',e);
-      window.dispatchEvent(new CustomEvent('florela-cloud-save-error',{detail:{reason,error:String(e?.message||e)}}));
-      return false;
-    }finally{
-      busy=false;
-      if(dirty) schedule(120);
-    }
-  }
-  function schedule(ms){
-    clearTimeout(timer);
-    timer=setTimeout(()=>writeCloud('localStorage'),Math.max(0,ms||350));
-  }
-
-  // El punto de verdad del administrador es su estado local actual. Cada vez que cualquier
-  // parte del administrador lo modifica, el cambio se manda a Supabase automáticamente.
-  const nativeSet=Storage.prototype.setItem;
-  Storage.prototype.setItem=function(k,v){
-    const result=nativeSet.call(this,k,v);
-    if(this===localStorage && (k===KEY||k===EXTRA)) schedule(350);
-    return result;
-  };
-  const nativeRemove=Storage.prototype.removeItem;
-  Storage.prototype.removeItem=function(k){
-    const result=nativeRemove.call(this,k);
-    if(this===localStorage && (k===KEY||k===EXTRA)) schedule(350);
-    return result;
-  };
-
-  // También cubre acciones que no pasen por localStorage inmediatamente.
-  document.addEventListener('click',e=>{
-    const b=e.target.closest?.('#fv2Save,#fv2SaveProduct,#fv2SaveStore,#fv2SaveMedia,#flCollabSave,#fv2AddProduct,#fv2AddCollabIndependent');
-    if(b) schedule(700);
-  },true);
-  ['florela-products-updated','florela-social-updated','florela-collab-updated','florela-appearance-updated'].forEach(ev=>
-    window.addEventListener(ev,()=>{if(unlocked())schedule(350)})
-  );
-  window.addEventListener('florela-admin-unlocked',()=>setTimeout(()=>schedule(150),150));
-
-  // Reintento al volver a la pestaña si quedó un cambio pendiente.
-  document.addEventListener('visibilitychange',()=>{if(!document.hidden && document.getElementById('flAdminV2')) schedule(250)});
-  window.addEventListener('online',()=>{if(document.getElementById('flAdminV2')) schedule(250)});
-
-  window.__florelaV17SaveNow=()=>writeCloud('manual');
-  window.__florelaV17Schedule=()=>schedule(0);
-  window.__florelaCloudStatus=()=>({adminPage:!!document.getElementById('flAdminV2'),endpoint:REST});
-})();
-</script>
-<script id="florela-cloud-refresh-v22-unified">
-/* Disabled in V5: replaced by the single canonical cloud loader below. */
-</script>
-<!-- FLORELA CANONICAL STATE GUARD V22 -->
-<script id="florela-canonical-state-guard-v22">
-(function(){
-  'use strict';
-  const KEY='florelaAdminV2Data';
-  function normalize(){
-    try{
-      let d=JSON.parse(localStorage.getItem(KEY)||'{}');
-      if(d&&typeof d==='object'&&d.main&&typeof d.main==='object'&&!Array.isArray(d.main)){
-        const nested=d.main;
-        d=Object.assign({},nested,d);
-        delete d.main;
-        localStorage.setItem(KEY,JSON.stringify(d));
-        window.florelaAdminV2Data=d;
-        window.__florelaCloudMain=d;
-      }
-    }catch(e){}
-  }
-  normalize();
-  window.addEventListener('load',normalize);
-})();
-</script>
-
-<!-- FLORELA CLOUD PRODUCT PHOTOS BRIDGE v1 -->
-<script id="florela-cloud-product-photos-v1">
-(function(){
-  'use strict';
-  const KEY='florelaAdminV2Data';
-  const ENDPOINT='https://ouxqgwqolajtvcusckag.supabase.co/functions/v1/florela-sync';
-  const TOKEN='florela-web-sync-v1';
-  let busy=false;
-  const pending=window.__florelaPendingCloudPhotos=window.__florelaPendingCloudPhotos||{};
-  function unlocked(){try{return sessionStorage.getItem('florelaAdminUnlocked')==='1'}catch(e){return false}}
-  function read(){try{const d=JSON.parse(localStorage.getItem(KEY)||'{}');return d&&typeof d==='object'?d:{}}catch(e){return {}}}
-  function write(d){try{localStorage.setItem(KEY,JSON.stringify(d));window.__florelaCloudMain=d;window.florelaAdminV2Data=d;window.dispatchEvent(new CustomEvent('florela-products-updated'));return true}catch(e){return false}}
-  function idOf(p,i){return String(p?.pid||p?.sku||('p'+i))}
-  function product(d,pid){const arr=Array.isArray(d.products)?d.products:[];return arr.find((p,i)=>idOf(p,i)===String(pid))||null}
-  async function upload(pid,file,index){
-    const form=new FormData();
-    form.append('file',file,file.name||('foto-'+index+'.jpg'));
-    form.append('path','products/'+String(pid)+'/cloud-'+Date.now()+'-'+index);
-    const r=await fetch(ENDPOINT,{method:'POST',headers:{'x-florela-admin':TOKEN},body:form,cache:'no-store'});
-    const j=await r.json().catch(()=>null);
-    if(!r.ok||!j?.ok)throw new Error(j?.error||('HTTP '+r.status));
-    return String(j.public_url||'');
-  }
-  function merge(pid,urls){
-    urls=(Array.isArray(urls)?urls:[]).filter(Boolean);
-    if(!urls.length)return false;
-    const d=read(),p=product(d,pid);
-    if(!p){pending[String(pid)]=[...(pending[String(pid)]||[]),...urls].slice(0,10);return false}
-    const old=Array.isArray(p.cloudPhotos)?p.cloudPhotos.filter(Boolean):[];
-    p.cloudPhotos=[...new Set([...old,...urls])].slice(0,10);
-    if(!p.image&&p.cloudPhotos[0])p.image=p.cloudPhotos[0];
-    delete pending[String(pid)];
-    write(d);
-    setTimeout(()=>window.__florelaV17Schedule?.(),120);
-    return true;
-  }
-  async function hydrate(){
-    try{
-      const r=await fetch(ENDPOINT,{cache:'no-store',headers:{Accept:'application/json'}});
-      const j=await r.json().catch(()=>null);
-      if(!r.ok||!j?.ok||!j.data)return;
-      const raw=j.data, incoming=raw?.main&&typeof raw.main==='object'?raw.main:raw;
-      const d=read();
-      const local=Array.isArray(d.products)?d.products:[];
-      const remote=Array.isArray(incoming.products)?incoming.products:[];
-      const byId=new Map(remote.map((p,i)=>[idOf(p,i),p]));
-      let changed=false;
-      local.forEach((p,i)=>{
-        const rp=byId.get(idOf(p,i));
-        if(!rp)return;
-        if(Array.isArray(rp.cloudPhotos)&&rp.cloudPhotos.length){
-          const old=Array.isArray(p.cloudPhotos)?p.cloudPhotos:[];
-          const merged=[...new Set([...old,...rp.cloudPhotos])].slice(0,10);
-          if(JSON.stringify(old)!==JSON.stringify(merged)){p.cloudPhotos=merged;changed=true}
-          if(!p.image&&merged[0]){p.image=merged[0];changed=true}
-        }
-      });
-      if(changed)write(d);
-      console.info('[FlorEla cloud photos] hydrate ok',remote.length);
-    }catch(e){console.warn('[FlorEla cloud photos] hydrate failed',e)}
-  }
-  async function flushPending(){
-    const d=read();
-    for(const pid of Object.keys(pending)){
-      const p=product(d,pid);
-      if(p){
-        const urls=[...(pending[pid]||[])];
-        const old=Array.isArray(p.cloudPhotos)?p.cloudPhotos:[];
-        p.cloudPhotos=[...new Set([...old,...urls])].slice(0,10);
-        if(!p.image&&p.cloudPhotos[0])p.image=p.cloudPhotos[0];
-        delete pending[pid];
-      }
-    }
-    write(d);
-    setTimeout(()=>window.__florelaV17Schedule?.(),120);
-  }
-  async function migrateLocalPhotos(){
-    if(busy||!unlocked())return;
-    try{
-      const db=await new Promise((res,rej)=>{
-        const r=indexedDB.open('FlorEla_Product_Photos_V81');
-        r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
-      });
-      if(!db.objectStoreNames.contains('photos')){db.close();return;}
-      const rows=await new Promise((res,rej)=>{
-        const r=db.transaction('photos','readonly').objectStore('photos').getAll();
-        r.onsuccess=()=>res(r.result||[]); r.onerror=()=>rej(r.error);
-      });
-      db.close();
-      if(!rows.length)return;
-      const d=read();
-      const products=Array.isArray(d.products)?d.products:[];
-      const byPid=new Map(products.map((p,i)=>[idOf(p,i),p]));
-      const bySku=new Map(products.filter(p=>p?.sku).map(p=>[String(p.sku).trim(),p]));
-      let migrated={};
-      try{migrated=JSON.parse(localStorage.getItem('florelaCloudMigratedPhotoIds')||'{}')||{}}catch(e){}
-      let changed=false, uploaded=0;
-      busy=true;
-      for(const row of rows){
-        if(!row?.blob)continue;
-        const rid=String(row.id??'');
-        if(!rid||migrated[rid])continue;
-        const sourceId=String(row.pid||row.productId||'');
-        const target=byPid.get(sourceId)||bySku.get(String(row.sku||'').trim());
-        if(!target)continue;
-        const pid=idOf(target,products.indexOf(target));
-        const current=Array.isArray(target.cloudPhotos)?target.cloudPhotos.filter(Boolean):[];
-        if(current.length>=10){migrated[rid]=true;continue;}
-        try{
-          const name=String(row.name||('foto-'+rid+'.jpg')).replace(/[^a-zA-Z0-9._-]/g,'_');
-          const form=new FormData();
-          form.append('file',row.blob,name);
-          form.append('path','products/'+pid+'/migrated-'+rid+'-'+name);
-          const r=await fetch(ENDPOINT,{method:'POST',headers:{'x-florela-admin':TOKEN},body:form,cache:'no-store'});
-          const j=await r.json().catch(()=>null);
-          if(!r.ok||!j?.ok||!j.public_url)throw new Error(j?.error||('HTTP '+r.status));
-          target.cloudPhotos=[...new Set([...current,String(j.public_url)])].slice(0,10);
-          if(!target.image&&target.cloudPhotos[0])target.image=target.cloudPhotos[0];
-          migrated[rid]=true; changed=true; uploaded++;
-        }catch(err){console.warn('[FlorEla cloud photos] migration failed',rid,err);}
-      }
-      if(changed){
-        localStorage.setItem(KEY,JSON.stringify(d));
-        localStorage.setItem('florelaCloudMigratedPhotoIds',JSON.stringify(migrated));
-        window.__florelaCloudMain=d; window.florelaAdminV2Data=d;
-        window.dispatchEvent(new CustomEvent('florela-products-updated'));
-        setTimeout(()=>window.__florelaV17Schedule?.(),200);
-      }else{
-        localStorage.setItem('florelaCloudMigratedPhotoIds',JSON.stringify(migrated));
-      }
-      console.info('[FlorEla cloud photos] local migration complete',uploaded,'photos');
-    }catch(e){console.warn('[FlorEla cloud photos] local migration unavailable',e)}
-    finally{busy=false;}
-  }
-  async function handleFiles(input){
-    if(busy||!unlocked())return;
-    const files=Array.from(input.files||[]).filter(f=>f?.type?.startsWith('image/'));
-    if(!files.length)return;
-    const pid=window.__florelaGetCurrentPhotoPid?.()||document.getElementById('fv2PSku')?.value?.trim();
-    if(!pid)return;
-    busy=true;
-    try{
-      const d=read(),p=product(d,pid),used=Array.isArray(p?.cloudPhotos)?p.cloudPhotos.length:0;
-      const room=Math.max(0,10-used);
-      const urls=[];
-      for(let i=0;i<files.slice(0,room).length;i++)urls.push(await upload(pid,files[i],i));
-      merge(pid,urls);
-      await flushPending();
-    }catch(e){console.error('[FlorEla cloud photos]',e)}
-    finally{busy=false}
-  }
-  document.addEventListener('change',e=>{if(e.target?.id==='fv2PPhotos')handleFiles(e.target)},true);
-  async function syncSavedProductPhotos(){
-    if(busy||!unlocked())return;
-    const pid=window.__florelaGetCurrentPhotoPid?.()||document.getElementById('fv2PSku')?.value?.trim();
-    if(!pid)return;
-    try{
-      const db=await new Promise((res,rej)=>{const r=indexedDB.open('FlorEla_Product_Photos_V81');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
-      if(!db.objectStoreNames.contains('photos')){db.close();return}
-      const rows=await new Promise((res,rej)=>{const r=db.transaction('photos','readonly').objectStore('photos').getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)});
-      db.close();
-      const matches=rows.filter(x=>String(x?.pid||x?.productId||x?.sku||'')===String(pid)&&x?.blob).sort((a,b)=>(a.created||0)-(b.created||0)).slice(0,10);
-      if(!matches.length)return;
-      const d=read(),p=product(d,pid);
-      if(!p)return;
-      const urls=Array.isArray(p.cloudPhotos)?p.cloudPhotos.filter(Boolean):[];
-      let changed=false; busy=true;
-      for(const row of matches){
-        if(urls.length>=10)break;
-        const marker=String(pid)+'::'+String(row.id);
-        if(localStorage.getItem('florelaCloudPhotoSynced:'+marker)==='1')continue;
-        try{
-          const name=String(row.name||('foto-'+row.id+'.jpg')).replace(/[^a-zA-Z0-9._-]/g,'_');
-          const form=new FormData();
-          form.append('file',row.blob,name);
-          form.append('path','products/'+String(pid)+'/save-'+String(row.id)+'-'+Date.now()+'-'+name);
-          const r=await fetch(ENDPOINT,{method:'POST',headers:{'x-florela-admin':TOKEN},body:form,cache:'no-store'});
-          const j=await r.json().catch(()=>null);
-          if(!r.ok||!j?.ok||!j.public_url)throw new Error(j?.error||('HTTP '+r.status));
-          const u=String(j.public_url);
-          if(!urls.includes(u)){urls.push(u);changed=true}
-          localStorage.setItem('florelaCloudPhotoSynced:'+marker,'1');
-        }catch(err){console.warn('[FlorEla cloud photos] save sync failed',row.id,err)}
-      }
-      if(changed){
-        p.cloudPhotos=urls.slice(0,10);
-        if(!p.image&&p.cloudPhotos[0])p.image=p.cloudPhotos[0];
-        write(d);
-        setTimeout(()=>window.__florelaV17Schedule?.(),150);
-        console.info('[FlorEla cloud photos] saved product photos synced',p.cloudPhotos.length);
-      }
-    }catch(e){console.warn('[FlorEla cloud photos] save sync unavailable',e)}
-    finally{busy=false}
-  }
-  document.addEventListener('click',e=>{
-    if(!unlocked())return;
-    const b=e.target.closest?.('#fv2SaveProduct');
-    if(b){
-      setTimeout(flushPending,850);
-      setTimeout(syncSavedProductPhotos,1000);
-    }
-  },true);
-  window.addEventListener('florela-admin-unlocked',()=>{setTimeout(flushPending,500);setTimeout(hydrate,800);setTimeout(migrateLocalPhotos,1200)});
-  window.addEventListener('florela-products-updated',()=>setTimeout(flushPending,120));
-  window.addEventListener('load',()=>{setTimeout(hydrate,900);setTimeout(migrateLocalPhotos,1800)});
-  setTimeout(hydrate,1400);
-  setTimeout(migrateLocalPhotos,2400);
-  window.__florelaCloudPhotoBridge={upload:handleFiles,flushPending};
-})();
-</script>
-
-<!-- FLORELA FINAL SINGLE-CLOUD-SYNC V1 -->
-<script id="florela-final-single-cloud-sync-v1">
-(function(){
-  'use strict';
-  // V6: use the proven PostgreSQL RPC directly. This avoids the Edge Function
-  // browser/CORS path that was reporting false cloud-save failures.
-  const ENDPOINT='https://ouxqgwqolajtvcusckag.supabase.co/rest/v1/rpc/florela_save_state';
-  const SBKEY='sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e';
-  const TOKEN='florela-web-sync-v1';
-  const KEY='florelaAdminV2Data';
-  const EXTRA='florelaEditableTextsV2';
-  let seq=0;
-
-  // V5: prevent stale local products from flashing while the canonical cloud
-  // state is loaded. Only the public catalog is hidden; the admin remains normal.
-  const revealStyle=document.createElement('style');
-  revealStyle.id='florela-cloud-first-v5-style';
-  revealStyle.textContent='#florelaPublicCatalogGrid[data-florela-cloud-first="1"]{visibility:hidden!important;}';
-  (document.head||document.documentElement).appendChild(revealStyle);
-  function markCatalogWaiting(){
-    try{const g=document.getElementById('florelaPublicCatalogGrid');if(g)g.setAttribute('data-florela-cloud-first','1');}catch(e){}
-  }
-  function revealCatalog(){
-    try{const g=document.getElementById('florelaPublicCatalogGrid');if(g)g.removeAttribute('data-florela-cloud-first');}catch(e){}
-  }
-  try{if(sessionStorage.getItem('florelaAdminUnlocked')!=='1')markCatalogWaiting();}catch(e){markCatalogWaiting();}
-
-  function read(k,fallback){try{const v=JSON.parse(localStorage.getItem(k)||'null');return v==null?fallback:v}catch(e){return fallback}}
-  function snapshot(){
-    let main=read(KEY,{}), extra=read(EXTRA,{});
-    if(main&&typeof main==='object'&&main.main&&typeof main.main==='object'&&!Array.isArray(main.main)){
-      main=Object.assign({},main.main,main); delete main.main;
-    }
-    if(main&&typeof main==='object'&&main.extra&&typeof main.extra==='object'&&!Array.isArray(main.extra)){
-      if(!extra||typeof extra!=='object'||Array.isArray(extra)) extra=main.extra;
-      delete main.extra;
-    }
-    return {main:main&&typeof main==='object'?main:{},extra:extra&&typeof extra==='object'?extra:{}};
-  }
-  async function cloudSave(){
-    const n=++seq, data=snapshot();
-    try{
-      const r=await fetch(ENDPOINT,{
-        method:'POST',cache:'no-store',
-        headers:{'apikey':SBKEY,'Authorization':'Bearer '+SBKEY,'Content-Type':'application/json','Accept':'application/json','Prefer':'return=representation'},
-        body:JSON.stringify({p_id:'main',p_data:data,p_token:TOKEN})
-      });
-      const text=await r.text(); let j=null; try{j=JSON.parse(text)}catch(e){}
-      if(!r.ok) throw new Error(j?.message||j?.error||text||('HTTP '+r.status));
-      if(j && j.ok===false) throw new Error(j.error||'Supabase rechazó el guardado');
-      const row=Array.isArray(j)?j[0]:j;
-      return {ok:true,updated_at:row?.updated_at||new Date().toISOString(),seq:n};
-    }catch(e){console.error('[FlorEla Cloud] save failed',e);return {ok:false,error:String(e?.message||e),seq:n};}
-  }
-  async function cloudLoad(){
-    try{
-      // V7: the RPC endpoint is POST-only. Public browsers must READ the
-      // canonical row through the REST table endpoint instead.
-      const READ_ENDPOINT='https://ouxqgwqolajtvcusckag.supabase.co/rest/v1/florela_app_state?id=eq.main&select=data,updated_at';
-      const r=await fetch(READ_ENDPOINT+'&v='+Date.now(),{cache:'no-store',headers:{'apikey':SBKEY,'Authorization':'Bearer '+SBKEY,'Accept':'application/json','Cache-Control':'no-cache','Pragma':'no-cache'}});
-      const rows=await r.json();
-      if(!r.ok||!Array.isArray(rows)||!rows.length||!rows[0]?.data) throw new Error(rows?.message||('HTTP '+r.status));
-      const raw=rows[0].data, main=raw?.main&&typeof raw.main==='object'?raw.main:raw, extra=raw?.extra&&typeof raw.extra==='object'?raw.extra:{};
-      localStorage.setItem(KEY,JSON.stringify(main));
-      localStorage.setItem(EXTRA,JSON.stringify(extra));
-      window.__florelaCloudStateLoaded=true;
-      window.__florelaCloudMain=main;
-      window.__florelaCloudExtra=extra;
-      window.__florelaCloudUpdatedAt=rows[0].updated_at||null;
-      try{window.__florelaAdminProducts=Array.isArray(main.products)?main.products:[];window.florelaAdminV2Data=main}catch(e){}
-      // Render exactly once from the canonical cloud snapshot.
-      window.dispatchEvent(new CustomEvent('florela-products-updated',{detail:{source:'cloud-final-v5'}}));
-      revealCatalog();
-      console.info('[FlorEla Cloud V7] canonical state loaded',rows[0].updated_at);
-      return true;
-    }catch(e){
-      console.warn('[FlorEla Cloud V5] load failed',e);
-      // Never leave the public page invisible if the network is unavailable.
-      setTimeout(revealCatalog,2500);
-      return false;
-    }
-  }
-  window.__florelaFinalCloudSave=cloudSave;
-  window.__florelaFinalCloudLoad=cloudLoad;
-
-  const saveIds=['#fv2Save','#fv2SaveProduct','#fv2SaveStore','#fv2SaveMedia','#flCollabSave','#fv2AddProduct','#fv2AddCollabIndependent','#flAdminSave'];
-  document.addEventListener('click',function(e){
-    const b=e.target.closest?.(saveIds.join(',')); if(!b)return;
-    setTimeout(async function(){
-      const result=await cloudSave();
-      const old=b.textContent;
-      b.textContent=result.ok?'☁️ Guardado en la nube':'⚠️ No se guardó en nube';
-      setTimeout(()=>{b.textContent=old},2500);
-      window.dispatchEvent(new CustomEvent(result.ok?'florela-cloud-saved':'florela-cloud-save-error',{detail:result}));
-    },1200);
-  },true);
-
-  // One canonical public loader only.
-  window.__florelaPublicCloudV18={refresh:cloudLoad,pull:cloudLoad};
-  let started=false;
-  function start(){if(started)return;started=true; cloudLoad();}
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',start,{once:true}); else start();
-  // Safety fallback for a blocked network.
-  setTimeout(revealCatalog,4000);
-})();
-</script>
-
 </body>
 </html>
