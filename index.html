@@ -3091,6 +3091,16 @@ document.addEventListener("click",function(e){
   const $=id=>document.getElementById(id);
   const publicUrl=path=>{if(!path)return '';if(/^https?:\/\//i.test(path))return path;return client?.storage.from(BUCKET).getPublicUrl(path).data?.publicUrl||''};
   const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  function normalizeForCompare(value){
+    if(Array.isArray(value))return value.map(normalizeForCompare);
+    if(value&&typeof value==='object'){
+      const o={};Object.keys(value).sort().forEach(k=>{o[k]=normalizeForCompare(value[k]);});return o;
+    }
+    return value;
+  }
+  function sameData(a,b){
+    try{return JSON.stringify(normalizeForCompare(a))===JSON.stringify(normalizeForCompare(b));}catch(e){return a===b;}
+  }
   async function getSession(){if(!client)return null;const r=await client.auth.getSession();return r.data?.session||null;}
   async function claimAdmin(){if(!client)return false;try{const r=await client.rpc('claim_florela_admin');return !r.error&&r.data===true}catch(e){return false}}
   async function readCloud(){const r=await client.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();if(r.error)throw r.error;return r.data?.data&&typeof r.data.data==='object'?r.data.data:{};}
@@ -3103,7 +3113,7 @@ document.addEventListener("click",function(e){
     const w=await client.rpc('save_florela_app_state',{p_data:next});
     if(w.error)throw w.error;
     const check=await readCloud();
-    if(verifyKey && JSON.stringify(check[verifyKey]??null)!==JSON.stringify(next[verifyKey]??null))throw new Error('Supabase no confirmó el guardado de '+verifyKey+'.');
+    if(verifyKey && !sameData(check[verifyKey]??null,next[verifyKey]??null))throw new Error('Supabase no confirmó el guardado de '+verifyKey+'.');
     window.__florelaCloudMedia=window.__florelaCloudMedia||{};
     if(next.floating)window.__florelaCloudMedia.floating=next.floating;
     if(Array.isArray(next.novedadesGallery))window.__florelaCloudMedia.novedadesGallery=next.novedadesGallery;
@@ -3140,6 +3150,7 @@ document.addEventListener("click",function(e){
   }
   async function saveFloatingImages(files){
     if(!files.length)return;
+    const status=$('admFloatingPhotoStatus'); if(status)status.textContent='☁️ Subiendo imágenes y guardándolas en la nube…';
     const current=Array.isArray(window.__florelaCloudMedia?.novedadesGallery)?window.__florelaCloudMedia.novedadesGallery.slice():[];
     const added=[];for(const f of files.slice(0,20-current.length)){added.push(await uploadFile(f,'floating/gallery'));}
     const next=current.concat(added).slice(0,20);
@@ -3199,7 +3210,7 @@ document.addEventListener("click",function(e){
   async function cloudMascotAdd(){
     const file=$('admMascotFile')?.files?.[0],name=$('admMascotSeason')?.value.trim()||'Mascota de temporada';if(!file){setMascotStatus('Selecciona una imagen o vídeo de la mascota.');return;}
     const st=window.__florelaCloudMedia?.mascot||{enabled:true,activeId:null,movement:true,items:[]};
-    setMascotStatus('☁️ Subiendo mascota a la nube…');
+    setMascotStatus('☁️ Subiendo mascota y guardando configuración…');
     const path=await uploadFile(file,'mascot');const id='mascot_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);const item={id,name,src:path,type:file.type?.startsWith('video/')?'video':'image'};const items=[...(st.items||[]),item];const next=await savePatch({mascot:{...st,enabled:true,activeId:id,items}},'mascot');window.__florelaCloudMedia.mascot=next.mascot;$('admMascotSeason').value='';$('admMascotFile').value='';renderMascotAdmin(next.mascot);renderCloudMascotPublic(next.mascot);setMascotStatus('✅ Mascota guardada y publicada en la nube.');
   }
   async function init(){
