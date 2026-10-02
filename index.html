@@ -3081,6 +3081,148 @@ document.addEventListener("click",function(e){
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })();
 </script>
+
+<script id="florela-cloud-persistence-v14">
+(function(){
+  const SUPABASE_URL='https://ouxqgwqolajtvcusckag.supabase.co';
+  const SUPABASE_KEY='sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e';
+  const ROW='main', BUCKET='florela-media';
+  let client=null, wired=false, renderingMascot=false, renderingGallery=false;
+  const $=id=>document.getElementById(id);
+  const publicUrl=path=>{if(!path)return '';if(/^https?:\/\//i.test(path))return path;return client?.storage.from(BUCKET).getPublicUrl(path).data?.publicUrl||''};
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+  async function getSession(){if(!client)return null;const r=await client.auth.getSession();return r.data?.session||null;}
+  async function claimAdmin(){if(!client)return false;try{const r=await client.rpc('claim_florela_admin');return !r.error&&r.data===true}catch(e){return false}}
+  async function readCloud(){const r=await client.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();if(r.error)throw r.error;return r.data?.data&&typeof r.data.data==='object'?r.data.data:{};}
+  async function savePatch(patch,verifyKey){
+    if(!client)throw new Error('Supabase aún no está conectado.');
+    if(!await getSession())throw new Error('La sesión del administrador no está activa.');
+    if(!await claimAdmin())throw new Error('El usuario no está autorizado como administrador.');
+    const current=await readCloud();
+    const next={...current,...patch,updatedAt:new Date().toISOString()};
+    const w=await client.rpc('save_florela_app_state',{p_data:next});
+    if(w.error)throw w.error;
+    const check=await readCloud();
+    if(verifyKey && JSON.stringify(check[verifyKey]??null)!==JSON.stringify(next[verifyKey]??null))throw new Error('Supabase no confirmó el guardado de '+verifyKey+'.');
+    window.__florelaCloudMedia=window.__florelaCloudMedia||{};
+    if(next.floating)window.__florelaCloudMedia.floating=next.floating;
+    if(Array.isArray(next.novedadesGallery))window.__florelaCloudMedia.novedadesGallery=next.novedadesGallery;
+    if(next.mascot)window.__florelaCloudMedia.mascot=next.mascot;
+    return next;
+  }
+  function getFloatingForm(){
+    const ids={kicker:'admFloatingKicker',title:'admFloatingTitle',intro:'admFloatingIntro',card1Title:'admFloatingCard1Title',card1Text:'admFloatingCard1Text',card2Title:'admFloatingCard2Title',card2Text:'admFloatingCard2Text',foot:'admFloatingFoot',cta:'admFloatingCta'};
+    const v={};Object.entries(ids).forEach(([k,id])=>{const el=$(id);if(el)v[k]=String(el.value||'').trim();});
+    ['showCard1','showCard2','showGallery','showFoot','showCta'].forEach(k=>{const el=$('admFloating'+k.charAt(0).toUpperCase()+k.slice(1));if(el)v[k]=!!el.checked;});
+    return v;
+  }
+  function fillFloating(v){if(!v)return;const ids={kicker:'admFloatingKicker',title:'admFloatingTitle',intro:'admFloatingIntro',card1Title:'admFloatingCard1Title',card1Text:'admFloatingCard1Text',card2Title:'admFloatingCard2Title',card2Text:'admFloatingCard2Text',foot:'admFloatingFoot',cta:'admFloatingCta'};Object.entries(ids).forEach(([k,id])=>{const el=$(id);if(el&&v[k]!==undefined)el.value=v[k];});['showCard1','showCard2','showGallery','showFoot','showCta'].forEach(k=>{const el=$('admFloating'+k.charAt(0).toUpperCase()+k.slice(1));if(el&&v[k]!==undefined)el.checked=v[k]!==false;});}
+  function applyFloating(v){if(!v)return;const pairs={florNovedadesKicker:v.kicker,florNovedadesTitle:v.title,florNovedadesIntro:v.intro,florNovedadesCard1Title:v.card1Title,florNovedadesCard1Text:v.card1Text,florNovedadesCard2Title:v.card2Title,florNovedadesCard2Text:v.card2Text,florNovedadesFoot:v.foot};Object.entries(pairs).forEach(([id,val])=>{const el=$(id);if(el)el.textContent=val??'';});const cta=$('florNovedadesCta');if(cta)cta.textContent=v.cta??'';const toggles={showCard1:'flor-novedades-section-card1',showCard2:'flor-novedades-section-card2',showGallery:'flor-novedades-section-gallery',showFoot:'flor-novedades-section-foot',showCta:'flor-novedades-section-cta'};Object.entries(toggles).forEach(([k,cls])=>document.querySelectorAll('.'+cls).forEach(el=>el.classList.toggle('flor-novedades-section-hidden',v[k]===false)));}
+  function renderCloudGallery(){
+    if(renderingGallery)return;
+    const urls=window.__florelaCloudMedia?.novedadesGallery||[];
+    renderingGallery=true;
+    try{
+      ['florNovedadesPhotoGallery','admFloatingPhotoGallery'].forEach(id=>{
+        const root=$(id);if(!root)return;root.innerHTML='';
+        if(!urls.length){const e=document.createElement('div');e.className='flor-novedades-photo-empty';e.textContent=id==='admFloatingPhotoGallery'?'Todavía no hay fotos. Usa “Agregar fotos” para publicar imágenes aquí.':'Próximamente compartiremos novedades de FlorEla.';root.appendChild(e);return;}
+        urls.forEach((u,i)=>{const item=document.createElement('div');item.className='flor-novedades-photo-item';const img=document.createElement('img');img.src=publicUrl(u);img.alt='Novedad de FlorEla '+(i+1);item.appendChild(img);if(id==='admFloatingPhotoGallery'){const rm=document.createElement('button');rm.type='button';rm.className='flor-novedades-photo-remove';rm.textContent='×';rm.setAttribute('aria-label','Eliminar foto');rm.addEventListener('click',async()=>{try{const next=urls.filter((_,j)=>j!==i);await savePatch({novedadesGallery:next.slice(0,20)},'novedadesGallery');renderCloudGallery();const st=$('admFloatingPhotoStatus');if(st)st.textContent='✅ Foto eliminada de la nube.';}catch(e){const st=$('admFloatingPhotoStatus');if(st)st.textContent='❌ No se pudo eliminar la foto: '+(e?.message||'error');}});item.appendChild(rm);}else{img.addEventListener('click',()=>{const u2=img.src;const w=window.open();if(w)w.document.write('<title>Foto FlorEla</title><img src="'+u2.replace(/"/g,'&quot;')+'" style="display:block;max-width:100%;max-height:100vh;margin:auto">');});}root.appendChild(item);});
+      });
+    }finally{setTimeout(()=>{renderingGallery=false},0)}
+  }
+  async function uploadFile(file,folder){
+    if(!client)throw new Error('Supabase aún no está conectado.');
+    const safe=String(file.name||'archivo').replace(/[^a-zA-Z0-9._-]/g,'_');
+    const ext=(file.type||'application/octet-stream').split('/')[1]||'bin';
+    const path=folder+'/'+Date.now()+'-'+Math.random().toString(36).slice(2,8)+'-'+safe.replace(/\.[^.]*$/,'')+'.'+ext;
+    const r=await client.storage.from(BUCKET).upload(path,file,{contentType:file.type||'application/octet-stream',cacheControl:'31536000',upsert:false});
+    if(r.error)throw r.error;return path;
+  }
+  async function saveFloatingImages(files){
+    if(!files.length)return;
+    const current=Array.isArray(window.__florelaCloudMedia?.novedadesGallery)?window.__florelaCloudMedia.novedadesGallery.slice():[];
+    const added=[];for(const f of files.slice(0,20-current.length)){added.push(await uploadFile(f,'floating/gallery'));}
+    const next=current.concat(added).slice(0,20);
+    await savePatch({novedadesGallery:next},'novedadesGallery');
+    renderCloudGallery();const st=$('admFloatingPhotoStatus');if(st)st.textContent='☁️ Imágenes del botón flotante guardadas en la nube.';
+  }
+  function localMascotRead(){
+    return new Promise(resolve=>{
+      try{
+        const r=indexedDB.open('florelaMascotDB_v1');
+        r.onsuccess=()=>{const db=r.result;let settings={};try{settings=JSON.parse(localStorage.getItem('florelaMascotSettings_v1')||'{}')}catch(e){};try{const q=db.transaction('mascots','readonly').objectStore('mascots').getAll();q.onsuccess=()=>{db.close();resolve({items:q.result||[],settings:{enabled:settings.enabled!==false,activeId:settings.activeId||null,movement:settings.movement!==false}})};q.onerror=()=>{db.close();resolve({items:[],settings:{enabled:true,activeId:null,movement:true}})}}catch(e){db.close();resolve({items:[],settings:{enabled:true,activeId:null,movement:true}})}};
+        r.onerror=()=>resolve({items:[],settings:{enabled:true,activeId:null,movement:true}});
+      }catch(e){resolve({items:[],settings:{enabled:true,activeId:null,movement:true}})}
+    });
+  }
+  async function migrateMascotToCloud(){
+    const local=await localMascotRead();
+    const existing=window.__florelaCloudMedia?.mascot||{};
+    const oldMap=new Map((existing.items||[]).map(x=>[x.id,x]));
+    const out=[];
+    for(const item of local.items||[]){
+      let src=item.src||'';
+      if(/^https?:\/\//i.test(src)){out.push({...item,src});continue;}
+      const old=oldMap.get(item.id);if(old?.src&&/^https?:\/\//i.test(old.src)){out.push({...item,src:old.src});continue;}
+      try{
+        const blob=await (await fetch(src)).blob();
+        const ext=item.type==='video'?'mp4':(blob.type.split('/')[1]||'png');
+        const path='mascot/'+item.id+'.'+ext;
+        const up=await client.storage.from(BUCKET).upload(path,blob,{contentType:blob.type|| (item.type==='video'?'video/mp4':'image/png'),cacheControl:'31536000',upsert:true});
+        if(up.error)throw up.error;
+        out.push({...item,src:path});
+      }catch(e){console.warn('FlorEla mascot upload:',e)}
+    }
+    const m={...local.settings,items:out};
+    const next=await savePatch({mascot:m},'mascot');
+    return next.mascot||m;
+  }
+  function renderMascotAdmin(m){
+    const root=$('admMascotList');if(!root||renderingMascot)return;
+    renderingMascot=true;
+    try{
+      const items=Array.isArray(m?.items)?m.items:[],st=m||{enabled:true,activeId:null,movement:true};root.innerHTML='';
+      if(!items.length){root.innerHTML='<div class="admin-note">No hay mascotas de temporada guardadas todavía. Puedes agregar una desde aquí.</div>';return;}
+      items.forEach(item=>{
+        const card=document.createElement('div');card.className='florela-mascot-admin-card';
+        let media=item.type==='video'?document.createElement('video'):document.createElement('img');media.src=publicUrl(item.src);media.muted=true;media.loop=true;media.playsInline=true;media.autoplay=item.type==='video';media.alt=item.name||'Mascota de temporada';media.style.cssText='width:100px;height:110px;object-fit:contain;border-radius:12px';
+        const info=document.createElement('div');info.className='info';const b=document.createElement('b');b.textContent=item.name||'Mascota de temporada';const sm=document.createElement('small');sm.textContent=(item.type==='video'?'🎬 Vídeo':'🖼️ Imagen')+' · '+(st.activeId===item.id&&st.enabled!==false?'🌷 Activa':'Disponible');info.append(b,sm);
+        const actions=document.createElement('div');actions.className='actions';const use=document.createElement('button');use.type='button';use.className='admin-secondary';use.textContent='Usar';use.onclick=async()=>{try{const next=await savePatch({mascot:{...st,enabled:true,activeId:item.id,items}},'mascot');window.__florelaCloudMedia.mascot=next.mascot;renderCloudMascotPublic(next.mascot);renderMascotAdmin(next.mascot);setMascotStatus('✅ Mascota activada en la nube.')}catch(e){setMascotStatus('❌ No se pudo activar: '+(e?.message||'error'));}};
+        const rm=document.createElement('button');rm.type='button';rm.className='admin-secondary';rm.textContent='Eliminar';rm.onclick=async()=>{if(!confirm('¿Eliminar esta mascota de temporada?'))return;try{const remaining=items.filter(x=>x.id!==item.id);const nextSt=st.activeId===item.id?{...st,activeId:null}:st;const next=await savePatch({mascot:{...nextSt,items:remaining}},'mascot');window.__florelaCloudMedia.mascot=next.mascot;renderCloudMascotPublic(next.mascot);renderMascotAdmin(next.mascot);setMascotStatus('✅ Mascota eliminada de la nube.')}catch(e){setMascotStatus('❌ No se pudo eliminar: '+(e?.message||'error'));}};
+        actions.append(use,rm);card.append(media,info,actions);root.appendChild(card);
+      });
+    }finally{setTimeout(()=>{renderingMascot=false},0)}
+  }
+  function renderCloudMascotPublic(m){
+    const el=$('florelaSeasonalMascot');if(!el)return;el.classList.toggle('florela-mascot-disabled',m?.enabled===false);el.classList.toggle('mascot-motion-off',m?.movement===false);if(m?.enabled===false){el.innerHTML='';return;}const item=(m?.items||[]).find(x=>x.id===m.activeId);if(!item?.src)return;el.innerHTML='';const src=publicUrl(item.src);if(item.type==='video'){const v=document.createElement('video');v.src=src;v.autoplay=true;v.muted=true;v.loop=true;v.playsInline=true;v.setAttribute('aria-hidden','true');el.appendChild(v);v.play().catch(()=>{});}else{const im=document.createElement('img');im.src=src;im.alt='';el.appendChild(im);}}
+  function setMascotStatus(msg){const st=$('admMascotStatus');if(st)st.textContent=msg;}
+  async function cloudMascotAdd(){
+    const file=$('admMascotFile')?.files?.[0],name=$('admMascotSeason')?.value.trim()||'Mascota de temporada';if(!file){setMascotStatus('Selecciona una imagen o vídeo de la mascota.');return;}
+    const st=window.__florelaCloudMedia?.mascot||{enabled:true,activeId:null,movement:true,items:[]};
+    setMascotStatus('☁️ Subiendo mascota a la nube…');
+    const path=await uploadFile(file,'mascot');const id='mascot_'+Date.now()+'_'+Math.random().toString(36).slice(2,7);const item={id,name,src:path,type:file.type?.startsWith('video/')?'video':'image'};const items=[...(st.items||[]),item];const next=await savePatch({mascot:{...st,enabled:true,activeId:id,items}},'mascot');window.__florelaCloudMedia.mascot=next.mascot;$('admMascotSeason').value='';$('admMascotFile').value='';renderMascotAdmin(next.mascot);renderCloudMascotPublic(next.mascot);setMascotStatus('✅ Mascota guardada y publicada en la nube.');
+  }
+  async function init(){
+    try{await (window.__florelaCloudReady||Promise.resolve(true));client=window.supabase?.createClient?.(SUPABASE_URL,SUPABASE_KEY);if(!client)return;const s=await readCloud();window.__florelaCloudMedia=window.__florelaCloudMedia||{};window.__florelaCloudMedia.floating=s.floating||{};window.__florelaCloudMedia.novedadesGallery=Array.isArray(s.novedadesGallery)?s.novedadesGallery:[];window.__florelaCloudMedia.mascot=s.mascot||{enabled:true,activeId:null,movement:true,items:[]};if(s.floating){fillFloating(s.floating);applyFloating(s.floating);}renderCloudGallery();renderCloudMascotPublic(window.__florelaCloudMedia.mascot);renderMascotAdmin(window.__florelaCloudMedia.mascot);
+      if(!wired){wired=true;
+        document.addEventListener('click',async e=>{
+          const fs=e.target.closest?.('#admFloatingSave'),fr=e.target.closest?.('#admFloatingReset');
+          if(fs||fr){e.preventDefault();e.stopImmediatePropagation();try{const v=fr?getFloatingForm():getFloatingForm();if(fr){const defaults=JSON.parse(localStorage.getItem('florelaFloatingContent_v2')||'null')||{};fillFloating(defaults);applyFloating(defaults);await savePatch({floating:defaults},'floating');}else{await savePatch({floating:v},'floating');applyFloating(v);}const st=$('admFloatingStatus');if(st)st.textContent='☁️ Botón flotante guardado en la nube y disponible en otros navegadores.';}catch(err){const st=$('admFloatingStatus');if(st)st.textContent='❌ No se pudo guardar el botón flotante: '+(err?.message||'error');}return;}
+          if(e.target.closest?.('#admMascotSave')){e.preventDefault();e.stopImmediatePropagation();try{await cloudMascotAdd()}catch(err){setMascotStatus('❌ No se pudo guardar la mascota: '+(err?.message||'error'));}return;}
+          if(e.target.closest?.('#admMascotHide')||e.target.closest?.('#admMascotShow')){e.preventDefault();e.stopImmediatePropagation();try{const old=window.__florelaCloudMedia?.mascot||{enabled:true,activeId:null,movement:true,items:[]};const enabled=!!e.target.closest('#admMascotShow');const next=await savePatch({mascot:{...old,enabled}},'mascot');window.__florelaCloudMedia.mascot=next.mascot;renderCloudMascotPublic(next.mascot);renderMascotAdmin(next.mascot);setMascotStatus(enabled?'☁️ Mascota visible en todos los navegadores autorizados.':'☁️ Mascota oculta en todos los navegadores autorizados.');}catch(err){setMascotStatus('❌ No se pudo cambiar la visibilidad: '+(err?.message||'error'));}return;}
+          if(e.target.closest?.('#admMascotMotionSave')){e.preventDefault();e.stopImmediatePropagation();try{const old=window.__florelaCloudMedia?.mascot||{enabled:true,activeId:null,movement:true,items:[]};const motion=!!$('admMascotMovement')?.checked;const next=await savePatch({mascot:{...old,movement:motion}},'mascot');window.__florelaCloudMedia.mascot=next.mascot;renderCloudMascotPublic(next.mascot);renderMascotAdmin(next.mascot);setMascotStatus('☁️ Movimiento guardado en la nube.');}catch(err){setMascotStatus('❌ No se pudo guardar el movimiento: '+(err?.message||'error'));}return;}
+        },true);
+        document.addEventListener('change',async e=>{if(e.target.id==='admFloatingPhotoInput'){e.preventDefault();e.stopImmediatePropagation();const files=[...e.target.files||[]].filter(f=>f.type.startsWith('image/'));try{await saveFloatingImages(files);}catch(err){const st=$('admFloatingPhotoStatus');if(st)st.textContent='❌ No se pudieron guardar las imágenes: '+(err?.message||'error');}e.target.value='';}},true);
+      }
+      const listObserver=new MutationObserver(()=>{if(!renderingMascot&&window.__florelaCloudMedia?.mascot)renderMascotAdmin(window.__florelaCloudMedia.mascot);if(!renderingGallery&&window.__florelaCloudMedia?.novedadesGallery)renderCloudGallery();});
+      const ml=$('admMascotList');if(ml)listObserver.observe(ml,{childList:true,subtree:true});
+      const cg=$('florNovedadesPhotoGallery');if(cg)listObserver.observe(cg,{childList:true,subtree:true});
+      const ag=$('admFloatingPhotoGallery');if(ag)listObserver.observe(ag,{childList:true,subtree:true});
+    }catch(e){console.warn('FlorEla cloud persistence v14:',e)}
+  }
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
+})();
+</script>
 </body></html><style id="florela-ajuste-foto-descripcion">
 /* Ajuste solicitado: foto más protagonista y descripción más compacta */
 .product-photo{
