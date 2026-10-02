@@ -2869,20 +2869,27 @@ document.addEventListener("click",function(e){
   const KEY='sb_publishable_0U45y3Ko7crrv8r_mq1wgA_H3-FaF6e';
   const ROW='main', BUCKET='florela-media', EMAIL='elaflor1402@gmail.com';
   let c=null, state={}, ready=false, busy=false;
+  let cloudReadyResolve;
+  window.__florelaCloudReady=new Promise(resolve=>{cloudReadyResolve=resolve});
   const $=id=>document.getElementById(id);
   const wait=ms=>new Promise(r=>setTimeout(r,ms));
   async function init(){
     try{
-      if(!window.supabase?.createClient)return;
+      if(!window.supabase?.createClient){cloudReadyResolve(false);return;}
       c=window.supabase.createClient(URLS,KEY); ready=true;
       await loadState();
-      await migrateLocalMedia();
-      await migrateMascot();
-      await loadState();
-      renderAll();
-      renderCloudMascot();
+      // Wire the cloud controls BEFORE any migration. A local migration must never
+      // prevent the admin buttons from being connected to Supabase.
       wireAdmin();
-    }catch(e){console.warn('FlorEla unified media:',e)}
+      renderAll();
+      try{await migrateLocalMedia()}catch(e){console.warn('FlorEla media migration:',e)}
+      try{await migrateMascot()}catch(e){console.warn('FlorEla mascot migration:',e)}
+      try{await loadState();renderAll()}catch(e){console.warn('FlorEla media reload:',e)}
+      cloudReadyResolve(true);
+    }catch(e){
+      console.warn('FlorEla unified media:',e);
+      cloudReadyResolve(false);
+    }
   }
   async function loadState(){
     const r=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
@@ -2891,7 +2898,7 @@ document.addEventListener("click",function(e){
   }
   async function session(){const r=await c.auth.getSession();return r.data?.session||null}
   async function admin(){const s=await session(); if(!s)return false; try{const r=await c.rpc('claim_florela_admin');return !r.error&&r.data===true}catch(e){return false}}
-  function publicUrl(path){if(!path)return '';if(/^https?:\\/\\//i.test(path))return path;return c.storage.from(BUCKET).getPublicUrl(path).data?.publicUrl||''}
+  function publicUrl(path){if(!path)return '';if(/^https?:\/\//i.test(path))return path;return c.storage.from(BUCKET).getPublicUrl(path).data?.publicUrl||''}
   async function upload(file,path){
     const blob=file instanceof Blob?file:await (await fetch(file)).blob();
     const r=await c.storage.from(BUCKET).upload(path,blob,{contentType:blob.type||'application/octet-stream',cacheControl:'31536000',upsert:true});
@@ -2900,11 +2907,22 @@ document.addEventListener("click",function(e){
   async function saveState(patch){
     const ok=await admin(); if(!ok)throw new Error('La sesión del administrador no está activa.');
     const r=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
+    if(r.error)throw r.error;
     const current=r.data?.data&&typeof r.data.data==='object'?r.data.data:{};
     const next={...current,...patch,updatedAt:new Date().toISOString()};
     const w=await c.rpc('save_florela_app_state',{p_data:next}); if(w.error)throw w.error;
-    state=next;
-    window.__florelaCloudMedia={bannerMedia:next.bannerMedia||{},novedadesGallery:Array.isArray(next.novedadesGallery)?next.novedadesGallery:[],welcomePopup:next.welcomePopup||{},mascot:next.mascot||{enabled:true,activeId:null,movement:true,items:[]}};
+    // Confirm the cloud write immediately. This prevents showing a false success
+    // message when a local handler saved but the cloud write did not happen.
+    const verify=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
+    if(verify.error)throw verify.error;
+    const saved=verify.data?.data&&typeof verify.data.data==='object'?verify.data.data:{};
+    for(const key of Object.keys(patch||{})){
+      if(JSON.stringify(saved[key]??null)!==JSON.stringify(next[key]??null)){
+        throw new Error('Supabase no confirmó el guardado de '+key+'.');
+      }
+    }
+    state=saved;
+    window.__florelaCloudMedia={bannerMedia:saved.bannerMedia||{},novedadesGallery:Array.isArray(saved.novedadesGallery)?saved.novedadesGallery:[],welcomePopup:saved.welcomePopup||{},mascot:saved.mascot||{enabled:true,activeId:null,movement:true,items:[]}};
     return true;
   }
   function blobDataUrl(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob)})}
@@ -2984,8 +3002,47 @@ document.addEventListener("click",function(e){
   async function handleBannerFiles(files){if(!files.length)return;const urls=[];for(let i=0;i<files.length&&i<10;i++)urls.push(await upload(files[i],'banner/images/'+Date.now()+'-'+i+'-'+files[i].name.replace(/[^a-zA-Z0-9._-]/g,'_')));const old=window.__florelaCloudMedia.bannerMedia||{};await saveState({bannerMedia:{images:urls,video:old.video||null,seconds:Number($('admBannerSeconds')?.value||old.seconds||30)}});await loadState();renderAll();$('admBannerImageCount').textContent=urls.length+' / 10 fotos guardadas';$('admStatus').textContent='☁️ Fotos del banner guardadas y publicadas.'}
   async function handleBannerVideo(file){if(!file)return;const old=window.__florelaCloudMedia.bannerMedia||{};const url=await upload(file,'banner/video/'+Date.now()+'-'+file.name.replace(/[^a-zA-Z0-9._-]/g,'_'));await saveState({bannerMedia:{images:old.images||[],video:url,seconds:Number($('admBannerSeconds')?.value||old.seconds||30)}});await loadState();renderAll();$('admBannerVideoName').textContent='Video de portada guardado en la nube';$('admStatus').textContent='☁️ Video del banner guardado y publicado.'}
   async function handleFloatingFiles(files){const out=[...(window.__florelaCloudMedia.novedadesGallery||[])];for(let i=0;i<files.length;i++)out.push(await upload(files[i],'floating/gallery/'+Date.now()+'-'+i+'-'+files[i].name.replace(/[^a-zA-Z0-9._-]/g,'_')));await saveState({novedadesGallery:out.slice(0,20)});await loadState();renderFloating();const st=$('admFloatingPhotoStatus');if(st)st.textContent='☁️ Imágenes guardadas y publicadas.'}
-  async function handleWelcomeSave(){const old=window.__florelaCloudMedia.welcomePopup||{};let image=old.image||'';const f=$('admWelcomeImage')?.files?.[0];if(f)image=await upload(f,'welcome/'+Date.now()+'-'+f.name.replace(/[^a-zA-Z0-9._-]/g,'_'));const v={enabled:!!$('admWelcomeEnabled')?.checked,text:$('admWelcomeText')?.value.trim()||'',link:$('admWelcomeLink')?.value.trim()||'',button:$('admWelcomeButton')?.value.trim()||'Ver más',image};await saveState({welcomePopup:v});await loadState();renderAll();const st=$('admWelcomeStatus');if(st)st.textContent='☁️ Pantalla de bienvenida guardada y publicada.'}
+  async function handleWelcomeSave(){
+    const old=window.__florelaCloudMedia.welcomePopup||{};
+    let image=old.image||'';
+    const f=$('admWelcomeImage')?.files?.[0];
+    if(f)image=await upload(f,'welcome/'+Date.now()+'-'+f.name.replace(/[^a-zA-Z0-9._-]/g,'_'));
+    const v={enabled:!!$('admWelcomeEnabled')?.checked,text:$('admWelcomeText')?.value.trim()||'',link:$('admWelcomeLink')?.value.trim()||'',button:$('admWelcomeButton')?.value.trim()||'Ver más',image};
+    await saveState({welcomePopup:v});
+    await loadState();
+    renderAll();
+    const st=$('admWelcomeStatus');if(st)st.textContent='☁️ Pantalla de bienvenida guardada y publicada.';
+    return true;
+  }
+  // Public bridge used by legacy local controllers too. They can no longer save
+  // welcome/floating media only in this browser.
+  window.florelaCloudSaveWelcome=handleWelcomeSave;
+  window.florelaCloudSaveFloatingFiles=handleFloatingFiles;
   function wireAdmin(){
+    if(window.__florelaCloudAdminWired)return;
+    window.__florelaCloudAdminWired=true;
+    // Capture these two legacy controls so their old IndexedDB/localStorage
+    // handlers cannot swallow the cloud save.
+    document.addEventListener('click',async e=>{
+      const saveBtn=e.target.closest?.('#admWelcomeSave');
+      const clearBtn=e.target.closest?.('#admWelcomeClear');
+      if(!saveBtn&&!clearBtn)return;
+      e.preventDefault();e.stopImmediatePropagation();
+      const st=$('admWelcomeStatus');
+      try{
+        await (window.__florelaCloudReady||Promise.resolve(true));
+        if(!ready)throw new Error('La conexión con la nube no está disponible.');
+        if(saveBtn){
+          await handleWelcomeSave();
+        }else{
+          await saveState({welcomePopup:{enabled:false,text:'',link:'',button:'Ver más',image:''}});
+          await loadState();renderAll();
+          if(st)st.textContent='☁️ Pantalla de bienvenida desactivada en la nube.';
+        }
+      }catch(err){
+        if(st)st.textContent='❌ No se pudo guardar en la nube: '+(err?.message||'error desconocido');
+      }
+    },true);
     document.addEventListener('change',async e=>{
       if(e.target.id==='admBannerImages'){e.preventDefault();e.stopImmediatePropagation();try{await handleBannerFiles([...e.target.files].filter(f=>f.type.startsWith('image/')).slice(0,10))}catch(err){$('admStatus').textContent='❌ No se pudieron guardar las fotos del banner.'}e.target.value='';}
       else if(e.target.id==='admBannerVideo'){e.preventDefault();e.stopImmediatePropagation();try{await handleBannerVideo(e.target.files?.[0])}catch(err){$('admStatus').textContent='❌ No se pudo guardar el video del banner.'}e.target.value='';}
