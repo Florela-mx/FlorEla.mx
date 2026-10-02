@@ -2916,13 +2916,34 @@ document.addEventListener("click",function(e){
     const verify=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
     if(verify.error)throw verify.error;
     const saved=verify.data?.data&&typeof verify.data.data==='object'?verify.data.data:{};
-    for(const key of Object.keys(patch||{})){
-      if(JSON.stringify(saved[key]??null)!==JSON.stringify(next[key]??null)){
-        throw new Error('Supabase no confirmó el guardado de '+key+'.');
-      }
+    const sameJson=(a,b)=>{
+      const norm=v=>{
+        if(v===null||typeof v!=='object')return v;
+        if(Array.isArray(v))return v.map(norm);
+        return Object.keys(v).sort().reduce((o,k)=>{o[k]=norm(v[k]);return o;},{});
+      };
+      return JSON.stringify(norm(a))===JSON.stringify(norm(b));
+    };
+    let mismatches=Object.keys(patch||{}).filter(key=>!sameJson(saved[key]??null,next[key]??null));
+    if(mismatches.length){
+      // Reintento una sola vez con el estado más reciente de Supabase. Esto evita
+      // falsos negativos por escrituras simultáneas o por el orden interno de JSONB.
+      const latest=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
+      const latestData=latest.data?.data&&typeof latest.data.data==='object'?latest.data.data:{};
+      const retry={...latestData,...patch,updatedAt:new Date().toISOString()};
+      const retryWrite=await c.rpc('save_florela_app_state',{p_data:retry});
+      if(retryWrite.error)throw retryWrite.error;
+      const retryVerify=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
+      if(retryVerify.error)throw retryVerify.error;
+      const retrySaved=retryVerify.data?.data&&typeof retryVerify.data.data==='object'?retryVerify.data.data:{};
+      mismatches=Object.keys(patch||{}).filter(key=>!sameJson(retrySaved[key]??null,retry[key]??null));
+      if(mismatches.length)throw new Error('Supabase no confirmó el guardado de '+mismatches[0]+'.');
+      state=retrySaved;
+    }else{
+      state=saved;
     }
-    state=saved;
-    window.__florelaCloudMedia={bannerMedia:saved.bannerMedia||{},novedadesGallery:Array.isArray(saved.novedadesGallery)?saved.novedadesGallery:[],welcomePopup:saved.welcomePopup||{},mascot:saved.mascot||{enabled:true,activeId:null,movement:true,items:[]}};
+    const finalSaved=state;
+    window.__florelaCloudMedia={bannerMedia:finalSaved.bannerMedia||{},novedadesGallery:Array.isArray(finalSaved.novedadesGallery)?finalSaved.novedadesGallery:[],welcomePopup:finalSaved.welcomePopup||{},mascot:finalSaved.mascot||{enabled:true,activeId:null,movement:true,items:[]}};
     return true;
   }
   function blobDataUrl(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob)})}
