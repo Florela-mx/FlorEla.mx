@@ -2845,6 +2845,19 @@ document.addEventListener("click",function(e){
   else{wire();addCloudStatus();initCloud();}
 })();
 </script>
+<style id="florela-photo-viewer-clean-controls">
+/* Visor de fotos: controles separados y discretos en escritorio */
+@media (min-width:601px){
+  .florela-photo-viewer-hint{display:none!important}
+  .florela-photo-viewer-nav{bottom:24px!important;gap:10px!important}
+  .florela-photo-viewer-nav button{width:44px!important;height:38px!important;border-radius:19px!important;font-size:22px!important}
+  .florela-photo-viewer img{max-height:calc(100dvh - 92px)!important;max-width:94vw!important}
+}
+@media (max-width:600px){
+  .florela-photo-viewer-hint{display:none!important}
+  .florela-photo-viewer-nav{display:none!important}
+}
+</style>
 </body></html><style id="florela-ajuste-foto-descripcion">
 /* Ajuste solicitado: foto más protagonista y descripción más compacta */
 .product-photo{
