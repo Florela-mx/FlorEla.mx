@@ -2292,10 +2292,10 @@ document.addEventListener("click",function(e){
  let dbPromise=null;
  function db(){if(dbPromise)return dbPromise;dbPromise=new Promise((resolve,reject)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>{if(!r.result.objectStoreNames.contains(STORE))r.result.createObjectStore(STORE,{keyPath:'id'})};r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error)});return dbPromise}
  function getSettings(){try{const x=JSON.parse(localStorage.getItem(SETTINGS)||'{}');return {enabled:x.enabled!==false,activeId:x.activeId||null,movement:x.movement!==false}}catch(e){return {enabled:true,activeId:null,movement:true}}}
- function setSettings(x){try{localStorage.setItem(SETTINGS,JSON.stringify(x))}catch(e){} applyMascot();}
+ function setSettings(x){try{localStorage.setItem(SETTINGS,JSON.stringify(x))}catch(e){} applyMascot();try{window.dispatchEvent(new CustomEvent('florela-mascot-changed',{detail:x}))}catch(e){}}
  async function all(){const d=await db();return new Promise((res,rej)=>{const r=d.transaction(STORE,'readonly').objectStore(STORE).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)})}
- async function put(x){const d=await db();return new Promise((res,rej)=>{const r=d.transaction(STORE,'readwrite').objectStore(STORE).put(x);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
- async function del(id){const d=await db();return new Promise((res,rej)=>{const r=d.transaction(STORE,'readwrite').objectStore(STORE).delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
+ async function put(x){const d=await db();return new Promise((res,rej)=>{const r=d.transaction(STORE,'readwrite').objectStore(STORE).put(x);r.onsuccess=()=>{try{window.dispatchEvent(new CustomEvent('florela-mascot-changed',{detail:{item:x}}))}catch(e){};res()};r.onerror=()=>rej(r.error)})}
+ async function del(id){const d=await db();return new Promise((res,rej)=>{const r=d.transaction(STORE,'readwrite').objectStore(STORE).delete(id);r.onsuccess=()=>{try{window.dispatchEvent(new CustomEvent('florela-mascot-changed',{detail:{deletedId:id}}))}catch(e){};res()};r.onerror=()=>rej(r.error)})}
  function readFile(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(file)})}
  function applyMascot(){const el=document.getElementById('florelaSeasonalMascot');if(!el)return;const st=getSettings();el.classList.toggle('florela-mascot-disabled',!st.enabled);el.classList.toggle('mascot-motion-off',!st.movement);el.classList.remove('mascot-motion-right-up');if(!st.enabled)return;if(st.activeId){all().then(items=>{const item=items.find(x=>x.id===st.activeId);if(!item||!item.src)return;el.innerHTML='';if(item.type==='video'){const v=document.createElement('video');v.src=item.src;v.autoplay=true;v.muted=true;v.loop=true;v.playsInline=true;v.setAttribute('aria-hidden','true');el.appendChild(v);v.play().catch(()=>{});}else{const img=document.createElement('img');img.src=item.src;img.alt='';el.appendChild(img);}}).catch(()=>{})}}
  function esc(v){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]||c))}
@@ -2877,14 +2877,17 @@ document.addEventListener("click",function(e){
       c=window.supabase.createClient(URLS,KEY); ready=true;
       await loadState();
       await migrateLocalMedia();
+      await migrateMascot();
+      await loadState();
       renderAll();
+      renderCloudMascot();
       wireAdmin();
     }catch(e){console.warn('FlorEla unified media:',e)}
   }
   async function loadState(){
     const r=await c.from('florela_app_state').select('data').eq('id',ROW).maybeSingle();
     if(!r.error&&r.data?.data&&typeof r.data.data==='object') state=r.data.data;
-    window.__florelaCloudMedia={bannerMedia:state.bannerMedia||{images:[],video:null,seconds:Number(state.bannerSeconds)||30},novedadesGallery:Array.isArray(state.novedadesGallery)?state.novedadesGallery:[],welcomePopup:state.welcomePopup||{enabled:false,text:'',link:'',button:'Ver más',image:''}};
+    window.__florelaCloudMedia={bannerMedia:state.bannerMedia||{images:[],video:null,seconds:Number(state.bannerSeconds)||30},novedadesGallery:Array.isArray(state.novedadesGallery)?state.novedadesGallery:[],welcomePopup:state.welcomePopup||{enabled:false,text:'',link:'',button:'Ver más',image:''},mascot:state.mascot||{enabled:true,activeId:null,movement:true,items:[]}};
   }
   async function session(){const r=await c.auth.getSession();return r.data?.session||null}
   async function admin(){const s=await session(); if(!s)return false; try{const r=await c.rpc('claim_florela_admin');return !r.error&&r.data===true}catch(e){return false}}
@@ -2901,7 +2904,7 @@ document.addEventListener("click",function(e){
     const next={...current,...patch,updatedAt:new Date().toISOString()};
     const w=await c.rpc('save_florela_app_state',{p_data:next}); if(w.error)throw w.error;
     state=next;
-    window.__florelaCloudMedia={bannerMedia:next.bannerMedia||{},novedadesGallery:Array.isArray(next.novedadesGallery)?next.novedadesGallery:[],welcomePopup:next.welcomePopup||{}};
+    window.__florelaCloudMedia={bannerMedia:next.bannerMedia||{},novedadesGallery:Array.isArray(next.novedadesGallery)?next.novedadesGallery:[],welcomePopup:next.welcomePopup||{},mascot:next.mascot||{enabled:true,activeId:null,movement:true,items:[]}};
     return true;
   }
   function blobDataUrl(blob){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=()=>rej(r.error);r.readAsDataURL(blob)})}
@@ -2910,6 +2913,42 @@ document.addEventListener("click",function(e){
   }
   async function getAllIdb(dbName,store,key){
     try{const db=await new Promise((res,rej)=>{const r=indexedDB.open(dbName);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});const v=await new Promise((res,rej)=>{const tx=db.transaction(store,'readonly'),q=tx.objectStore(store).get(key);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)});db.close();return Array.isArray(v)?v:[] }catch(e){return[]}
+  }
+  async function getMascotLocal(){
+    let items=[];let settings={enabled:true,activeId:null,movement:true};
+    try{items=await getAllIdb('florelaMascotDB_v1','mascots','__all__')}catch(e){}
+    try{const db=await new Promise((res,rej)=>{const r=indexedDB.open('florelaMascotDB_v1');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});settings=JSON.parse(localStorage.getItem('florelaMascotSettings_v1')||'{}');db.close()}catch(e){}
+    try{const db=await new Promise((res,rej)=>{const r=indexedDB.open('florelaMascotDB_v1');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});items=await new Promise((res,rej)=>{const q=db.transaction('mascots','readonly').objectStore('mascots').getAll();q.onsuccess=()=>res(q.result||[]);q.onerror=()=>rej(q.error)});db.close()}catch(e){}
+    return {items,settings:{enabled:settings.enabled!==false,activeId:settings.activeId||null,movement:settings.movement!==false}};
+  }
+  function renderCloudMascot(){
+    const el=$('florelaSeasonalMascot');const m=window.__florelaCloudMedia?.mascot||{};if(!el)return;
+    el.classList.toggle('florela-mascot-disabled',m.enabled===false);el.classList.toggle('mascot-motion-off',m.movement===false);el.classList.remove('mascot-motion-right-up');
+    if(m.enabled===false)return;const item=(m.items||[]).find(x=>x.id===m.activeId)||null;if(!item||!item.src)return;
+    el.innerHTML='';if(item.type==='video'){const v=document.createElement('video');v.src=publicUrl(item.src);v.autoplay=true;v.muted=true;v.loop=true;v.playsInline=true;v.setAttribute('aria-hidden','true');el.appendChild(v);v.play().catch(()=>{});}else{const im=document.createElement('img');im.src=publicUrl(item.src);im.alt='';el.appendChild(im);}
+  }
+  async function migrateMascot(){
+    if(!await admin())return false;
+    const existing=window.__florelaCloudMedia.mascot||{};
+    const local=await getMascotLocal();
+    if(!local.items.length){
+      if(existing.items&&existing.items.length){await saveState({mascot:{...local.settings,items:[]}});}
+      return true;
+    }
+    const oldMap=new Map((existing.items||[]).map(x=>[x.id,x]));
+    const uploaded=[];
+    for(const item of local.items){
+      let src=item.src||'';
+      if(!/^https?:\/\//i.test(src)){
+        const old=oldMap.get(item.id);
+        if(old?.src&&/^https?:\/\//i.test(old.src)) src=old.src;
+        else {const ext=item.type==='video'?'mp4':'jpg';src=await upload(src,'mascot/'+item.id+'.'+ext);}
+      }
+      uploaded.push({...item,src});
+    }
+    const m={...local.settings,items:uploaded};
+    await saveState({mascot:m});
+    return true;
   }
   async function migrateLocalMedia(){
     if(!await admin())return;
@@ -2941,7 +2980,7 @@ document.addEventListener("click",function(e){
     const g=window.__florelaCloudMedia.novedadesGallery||[]; const root=$('florNovedadesPhotoGallery'); if(!root)return; root.innerHTML=''; if(!g.length){const e=document.createElement('div');e.className='flor-novedades-photo-empty';e.textContent='Próximamente compartiremos novedades de FlorEla.';root.appendChild(e);return} g.forEach((u,i)=>{const d=document.createElement('div');d.className='flor-novedades-photo-item';const im=document.createElement('img');im.src=publicUrl(u);im.alt='Novedad de FlorEla '+(i+1);d.appendChild(im);root.appendChild(d)});
   }
   function renderWelcome(){const v=window.__florelaCloudMedia.welcomePopup||{};const img=$('florelaWelcomeImage'),txt=$('florelaWelcomeText'),a=$('florelaWelcomeLink');if(!img||!txt||!a)return;if(v.enabled!==true||(!v.image&&!v.text))return;img.style.display=v.image?'block':'none';if(v.image)img.src=publicUrl(v.image);txt.textContent=v.text||'';a.style.display=v.link?'inline-block':'none';a.href=v.link||'#';a.textContent=v.button||'Ver más';setTimeout(()=>{const o=$('florelaWelcomeOverlay');if(o&&!o.classList.contains('open')){o.classList.add('open');o.setAttribute('aria-hidden','false');document.body.style.overflow='hidden'}},350)}
-  function renderAll(){renderBanner();renderFloating();renderWelcome();}
+  function renderAll(){renderBanner();renderFloating();renderWelcome();renderCloudMascot();}
   async function handleBannerFiles(files){if(!files.length)return;const urls=[];for(let i=0;i<files.length&&i<10;i++)urls.push(await upload(files[i],'banner/images/'+Date.now()+'-'+i+'-'+files[i].name.replace(/[^a-zA-Z0-9._-]/g,'_')));const old=window.__florelaCloudMedia.bannerMedia||{};await saveState({bannerMedia:{images:urls,video:old.video||null,seconds:Number($('admBannerSeconds')?.value||old.seconds||30)}});await loadState();renderAll();$('admBannerImageCount').textContent=urls.length+' / 10 fotos guardadas';$('admStatus').textContent='☁️ Fotos del banner guardadas y publicadas.'}
   async function handleBannerVideo(file){if(!file)return;const old=window.__florelaCloudMedia.bannerMedia||{};const url=await upload(file,'banner/video/'+Date.now()+'-'+file.name.replace(/[^a-zA-Z0-9._-]/g,'_'));await saveState({bannerMedia:{images:old.images||[],video:url,seconds:Number($('admBannerSeconds')?.value||old.seconds||30)}});await loadState();renderAll();$('admBannerVideoName').textContent='Video de portada guardado en la nube';$('admStatus').textContent='☁️ Video del banner guardado y publicado.'}
   async function handleFloatingFiles(files){const out=[...(window.__florelaCloudMedia.novedadesGallery||[])];for(let i=0;i<files.length;i++)out.push(await upload(files[i],'floating/gallery/'+Date.now()+'-'+i+'-'+files[i].name.replace(/[^a-zA-Z0-9._-]/g,'_')));await saveState({novedadesGallery:out.slice(0,20)});await loadState();renderFloating();const st=$('admFloatingPhotoStatus');if(st)st.textContent='☁️ Imágenes guardadas y publicadas.'}
@@ -2953,6 +2992,7 @@ document.addEventListener("click",function(e){
       else if(e.target.id==='admBannerSeconds'){try{const bm=window.__florelaCloudMedia.bannerMedia||{};await saveState({bannerMedia:{...bm,seconds:Number(e.target.value)||30}});renderBanner()}catch(err){}}
       else if(e.target.id==='admFloatingPhotoInput'){e.preventDefault();e.stopImmediatePropagation();try{await handleFloatingFiles([...e.target.files].filter(f=>f.type.startsWith('image/')))}catch(err){$('admFloatingPhotoStatus').textContent='❌ No se pudieron guardar las imágenes.'}e.target.value='';}
     },true);
+    window.addEventListener('florela-mascot-changed',async()=>{try{await migrateMascot();await loadState();renderCloudMascot()}catch(err){console.warn('Mascota nube:',err)}});
     document.addEventListener('click',async e=>{
       if(e.target.closest('#admWelcomeSave')){e.preventDefault();e.stopImmediatePropagation();try{await handleWelcomeSave()}catch(err){$('admWelcomeStatus').textContent='❌ No se pudo guardar la pantalla.'};return;}
       if(e.target.closest('#admWelcomeClear')){e.preventDefault();e.stopImmediatePropagation();try{await saveState({welcomePopup:{enabled:false,text:'',link:'',button:'Ver más',image:''}});await loadState();renderAll();$('admWelcomeStatus').textContent='Pantalla de bienvenida desactivada.'}catch(err){}return;}
