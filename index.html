@@ -403,9 +403,16 @@ button.flor-novedades-trigger img.flor-novedades-icon{
 .florela-photo-viewer-close{position:absolute;right:14px;top:14px;z-index:10;width:44px;height:44px;border:0;border-radius:50%;background:rgba(255,253,249,.94);color:#382a25;font-size:29px;line-height:1;cursor:pointer;display:grid;place-items:center}
 .florela-photo-viewer-count{position:absolute;top:17px;left:50%;transform:translateX(-50%);z-index:9;background:rgba(0,0,0,.5);color:#fff;padding:5px 11px;border-radius:20px;font-size:12px;pointer-events:none}
 .florela-photo-viewer-hint{position:absolute;bottom:18px;left:50%;transform:translateX(-50%);z-index:9;background:rgba(0,0,0,.48);color:#fff;padding:7px 12px;border-radius:18px;font-size:12px;pointer-events:none;white-space:nowrap}
+.florela-photo-viewer-nav{position:absolute;bottom:18px;z-index:11;display:flex;gap:8px;left:50%;transform:translateX(-50%)}
+.florela-photo-viewer-nav button{width:42px;height:34px;border:1px solid rgba(255,255,255,.28);border-radius:17px;background:rgba(255,253,249,.86);color:#6f3040;font-size:20px;line-height:1;cursor:pointer;box-shadow:0 3px 12px rgba(0,0,0,.16)}
+.florela-photo-viewer-nav button:disabled{opacity:.35;cursor:default}
+.florela-photo-viewer-nav button:hover:not(:disabled){background:#fff}
+@media(min-width:601px){.florela-photo-viewer-nav{display:flex}.florela-photo-viewer-hint{display:block}}
+@media(max-width:600px){.florela-photo-viewer-nav{display:none}.florela-photo-viewer-hint{display:none}}
 .product-gallery img{cursor:zoom-in!important}
 </style>
 <style id="florela-favorite-premium">
+.featured-label{display:inline-block;margin:0 0 7px;padding:4px 9px;border-radius:999px;background:#f4e4c8;color:#7b5a25;font-size:11px;font-weight:800;letter-spacing:.2px}
 .product-info{position:relative!important;padding-right:58px!important}
 .product-info .fav-icon{position:absolute!important;right:12px!important;top:12px!important;width:36px!important;height:36px!important;padding:0!important;display:grid!important;place-items:center!important;border:1px solid rgba(141,48,69,.22)!important;border-radius:50%!important;background:rgba(255,253,249,.68)!important;color:var(--red)!important;font-size:21px!important;line-height:1!important;box-shadow:0 3px 12px rgba(67,39,34,.10)!important;backdrop-filter:blur(5px)!important;-webkit-backdrop-filter:blur(5px)!important;z-index:6!important}
 .product-info .fav-icon:hover{background:rgba(255,253,249,.92)!important;transform:scale(1.06)!important}
@@ -1426,7 +1433,7 @@ function renderProducts(){
   syncAdminProducts();
   const root=document.getElementById("products");root.innerHTML="";
   const filter=(document.getElementById("search")?.value||"").toLowerCase();
-  const matches=sampleProducts.filter(p=>(p.name||"").toLowerCase().includes(filter));
+  const matches=sampleProducts.filter(p=>(p.name||"").toLowerCase().includes(filter)).map((p,i)=>({...p,__catalogOrder:i})).sort((a,b)=>Number(!!b.featured)-Number(!!a.featured)||a.__catalogOrder-b.__catalogOrder);
   if(!matches.length){root.innerHTML='<div class="catalog-empty" style="grid-column:1/-1;text-align:center;padding:32px 16px;color:var(--muted)">Aún no hay artículos disponibles. Muy pronto encontrarás aquí las creaciones de FlorEla. 🌷</div>';return;}
   matches.forEach(p=>{
     const imgs=[...(p.images||[])].filter(Boolean); if(!imgs.length&&p.image)imgs.push(p.image);
@@ -1442,7 +1449,7 @@ function renderProducts(){
     const soldOut=p.status==='inactive' || (Number(p.stock)>0 && Number(p.stock)<=0);
     const stockLeft=Number(p.stock)>0?Math.max(0,Math.floor(Number(p.stock))-cartUnitsForProduct(p.id)):null;
     const stockLabel='';
-    el.innerHTML=`<div class="product-photo">${gallery}</div><div class="product-info"><button type="button" class="fav-icon" aria-label="Agregar a favoritos" data-product-id="${safe(String(p.id))}">${isFav?"♥":"♡"}</button><h3>${safe(p.name)}</h3>${price}<details class="details"><summary>Ver descripción completa</summary><p>${safe(p.desc)}</p></details><div class="field"><label>Color / variación</label><select id="color-${safe(id)}" ${soldOut?"disabled":""}>${(p.colors||['Personalizado']).map(c=>`<option>${safe(c)}</option>`).join("")}</select></div><div class="field prep-field"><label>Tiempo de preparación</label><div class="prep-display"><span class="prep-icon">🕒</span> ${Number(p.prep)===0?"Listo para entrega":""+(Number(p.prep)||2)+" días de elaboración"}</div>${stockLabel}</div><div class="product-actions">${soldOut?'<div class="soldout-message">🌷 Por el momento ya no contamos con más unidades disponibles.</div>':'<button type="button" class="btn add-cart-btn" data-product-id="${safe(String(p.id))}">＋ Agregar al carrito</button>'}</div></div>`;
+    el.innerHTML=`<div class="product-photo">${gallery}</div><div class="product-info">${p.featured?'<div class="featured-label">★ Destacado</div>':''}<button type="button" class="fav-icon" aria-label="Agregar a favoritos" data-product-id="${safe(String(p.id))}">${isFav?"♥":"♡"}</button><h3>${safe(p.name)}</h3>${price}<details class="details"><summary>Ver descripción completa</summary><p>${safe(p.desc)}</p></details><div class="field"><label>Color / variación</label><select id="color-${safe(id)}" ${soldOut?"disabled":""}>${(p.colors||['Personalizado']).map(c=>`<option>${safe(c)}</option>`).join("")}</select></div><div class="field prep-field"><label>Tiempo de preparación</label><div class="prep-display"><span class="prep-icon">🕒</span> ${Number(p.prep)===0?"Listo para entrega":""+(Number(p.prep)||2)+" días de elaboración"}</div>${stockLabel}</div><div class="product-actions">${soldOut?'<div class="soldout-message">🌷 Por el momento ya no contamos con más unidades disponibles.</div>':'<button type="button" class="btn add-cart-btn" data-product-id="${safe(String(p.id))}">＋ Agregar al carrito</button>'}</div></div>`;
     root.appendChild(el);
     const cartBtn = el.querySelector('.add-cart-btn:not([disabled])');
     if(cartBtn){
@@ -2393,7 +2400,8 @@ document.addEventListener("click",function(e){
   <button type="button" class="florela-photo-viewer-close" id="florelaPhotoViewerClose" aria-label="Cerrar">×</button>
   <div class="florela-photo-viewer-count" id="florelaPhotoViewerCount"></div>
   <img id="florelaPhotoViewerImg" alt="">
-  <div class="florela-photo-viewer-hint" id="florelaPhotoViewerHint">Desliza para ver las demás fotos</div>
+  <div class="florela-photo-viewer-nav" id="florelaPhotoViewerNav" aria-label="Navegar entre fotos"><button type="button" id="florelaPhotoViewerPrev" aria-label="Foto anterior">‹</button><button type="button" id="florelaPhotoViewerNext" aria-label="Foto siguiente">›</button></div>
+  <div class="florela-photo-viewer-hint" id="florelaPhotoViewerHint">‹ Anterior   ·   Siguiente ›   ·   también puedes usar ← → o hacer clic en la foto</div>
 </div>
 <script>
 (function(){
@@ -2403,6 +2411,8 @@ document.addEventListener("click",function(e){
   const count=document.getElementById('florelaPhotoViewerCount');
   const hint=document.getElementById('florelaPhotoViewerHint');
   const closeBtn=document.getElementById('florelaPhotoViewerClose');
+  const prevBtn=document.getElementById('florelaPhotoViewerPrev');
+  const nextBtn=document.getElementById('florelaPhotoViewerNext');
   if(!viewer||!viewerImg)return;
   function show(i){
     if(!viewerImages.length)return;
@@ -2411,6 +2421,8 @@ document.addEventListener("click",function(e){
     viewerImg.alt='Foto '+(viewerIndex+1);
     count.textContent=viewerImages.length>1?(viewerIndex+1)+' / '+viewerImages.length:'';
     hint.style.display=viewerImages.length>1?'block':'none';
+    if(prevBtn)prevBtn.disabled=viewerImages.length<=1;
+    if(nextBtn)nextBtn.disabled=viewerImages.length<=1;
   }
   function open(id,index){
     const p=(typeof sampleProducts!=='undefined'?sampleProducts:[]).find(x=>String(x.id)===String(id));
@@ -2437,7 +2449,9 @@ document.addEventListener("click",function(e){
   },true);
   closeBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();close();});
   viewer.addEventListener('click',function(e){if(e.target===viewer)close();});
-  viewerImg.addEventListener('click',function(e){e.stopPropagation();});
+  viewerImg.addEventListener('click',function(e){e.stopPropagation();if(viewerImages.length>1)show(viewerIndex+1);});
+  if(prevBtn)prevBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();if(viewerImages.length>1)show(viewerIndex-1);});
+  if(nextBtn)nextBtn.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();if(viewerImages.length>1)show(viewerIndex+1);});
   viewer.addEventListener('touchstart',function(e){
     const t=e.changedTouches[0];startX=t.clientX;startY=t.clientY;moved=false;
   },{passive:true});
