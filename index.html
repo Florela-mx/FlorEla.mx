@@ -1113,7 +1113,10 @@ $('admSave').addEventListener('click',async()=>{const map={admCream:'cream',admI
      const img=(p.mainImage||((p.images||[])[0])||p.image||'');
      const status=p.status==='active'?'Disponible':'Oculto';
      const prepText=p.prep===0?'Listo para entrega':(p.prep?p.prep+' '+(Number(p.prep)===1?'día':'días'):'Sin indicar');
-     const priceText=p.discount?formatPrice(finalPrice(p))+" <s>"+formatPrice(p.price)+"</s> · "+p.discount+"% desc.":formatPrice(p.price);
+     const basePrice=Number(p.price||0);
+     const discount=Number(p.discount||0);
+     const final=discount>0?Math.max(0,basePrice*(1-discount/100)):basePrice;
+     const priceText=discount?money(final)+" <s>"+money(basePrice)+"</s> · "+discount+"% desc.":money(basePrice);
      return `<details class="admin-product-card"><summary class="admin-product-summary"><div class="admin-product-main">${img?`<img src="${img}" alt="">`:'<div style="width:58px;height:58px;border-radius:10px;background:#f4e8df;display:grid;place-items:center;flex:none">🌷</div>'}<div class="admin-product-quick"><b>${safe(p.name||'Sin nombre')}</b><small>${priceText} · ${status} · ${prepText}</small></div></div></summary><div class="admin-product-details"><div class="admin-product-meta">Preparación: ${prepText} · Stock: ${p.stock??0} · SKU: ${safe(p.sku||'—')}<br>Fotos: ${(p.images||[]).length} · Color: ${safe(p.color||'—')} · Categoría: ${safe(p.category||'—')} ${p.featured?'· Destacado':''}</div><div class="admin-product-actions"><button type="button" class="admin-secondary" data-edit="${i}">Editar</button><button type="button" class="admin-secondary" data-toggle="${i}">${p.status==='active'?'Ocultar':'Activar'}</button><button type="button" class="admin-secondary" data-remove="${i}">Eliminar</button></div></div></details>`;
    }).join(''):'<div class="admin-note">Todavía no hay productos creados en el administrador.</div>';
    $('admProductList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>editProduct(+b.dataset.edit));
@@ -1269,17 +1272,32 @@ $('admSave').addEventListener('click',async()=>{const map={admCream:'cream',admI
   return candidate;
 }
 $('admAddProduct').addEventListener('click',async()=>{
-   const product={name:$('admProductName').value.trim(),price:Number($('admProductPrice').value||0),discount:Number($('admProductDiscount').value||0),color:$('admProductColor').value.trim(),prep:$('admProductPrep').value!==''?Number($('admProductPrep').value):null,oldPrice:Number($('admProductOldPrice').value||0)||null,stock:Math.max(0,Number($('admProductStock').value||0)),category:$('admProductCategory').value,sku:editingIndex>=0?(added[editingIndex].sku||generateProductSKU($('admProductCategory').value)):generateProductSKU($('admProductCategory').value),desc:$('admProductDesc').value.trim(),description:$('admProductDesc').value.trim(),mainImage:$('admProductMainUrl').value.trim(),images:[...pendingImages].slice(0,10),tags:$('admProductTags').value.split(',').map(x=>x.trim()).filter(Boolean),status:$('admProductStatus').value,featured:$('admProductFeatured').checked,updatedAt:new Date().toISOString()};
-   product.previousPrice=product.oldPrice;
-   if(!product.name)return alert('Escribe el nombre del producto.');if(product.price<0)return alert('El precio no puede ser negativo.');if(product.discount<0||product.discount>100)return alert('El descuento debe estar entre 0 y 100%.');if(product.prep!==null&&(product.prep<0||product.prep>5))return alert('El tiempo de preparación debe ser disponible para entrega inmediata o de 1 a 5 días.');
-   if(product.mainImage && product.images.length===0)product.images=[product.mainImage];
-   product.mainImage=product.mainImage||product.images[0]||'';
-   const previousIndex=editingIndex;
-   if(editingIndex>=0)added[editingIndex]={...added[editingIndex],...product};else added.push({id:'fl-'+Date.now(),...product});
-   renderAdminProducts();
-   $('admProductStatusMsg').textContent=previousIndex>=0?'✏️ Producto actualizado. Guardando…':'➕ Producto agregado. Guardando…';
-   clearProductForm();
-   await persistProducts();
+   const status=$('admProductStatusMsg');
+   try{
+     if(status)status.textContent='⏳ Procesando producto…';
+     const product={name:$('admProductName').value.trim(),price:Number($('admProductPrice').value||0),discount:Number($('admProductDiscount').value||0),color:$('admProductColor').value.trim(),prep:$('admProductPrep').value!==''?Number($('admProductPrep').value):null,oldPrice:Number($('admProductOldPrice').value||0)||null,stock:Math.max(0,Number($('admProductStock').value||0)),category:$('admProductCategory').value,sku:editingIndex>=0?(added[editingIndex].sku||generateProductSKU($('admProductCategory').value)):generateProductSKU($('admProductCategory').value),desc:$('admProductDesc').value.trim(),description:$('admProductDesc').value.trim(),mainImage:$('admProductMainUrl').value.trim(),images:[...pendingImages].slice(0,10),tags:$('admProductTags').value.split(',').map(x=>x.trim()).filter(Boolean),status:$('admProductStatus').value,featured:$('admProductFeatured').checked,updatedAt:new Date().toISOString()};
+     product.previousPrice=product.oldPrice;
+     if(!product.name){if(status)status.textContent='⚠️ Escribe el nombre del producto.';return;}
+     if(product.price<0){if(status)status.textContent='⚠️ El precio no puede ser negativo.';return;}
+     if(product.discount<0||product.discount>100){if(status)status.textContent='⚠️ El descuento debe estar entre 0 y 100%.';return;}
+     if(product.prep!==null&&(product.prep<0||product.prep>5)){if(status)status.textContent='⚠️ El tiempo de preparación debe ser entrega inmediata o de 1 a 5 días.';return;}
+     if(product.mainImage && product.images.length===0)product.images=[product.mainImage];
+     product.mainImage=product.mainImage||product.images[0]||'';
+     const previousIndex=editingIndex;
+     if(editingIndex>=0)added[editingIndex]={...added[editingIndex],...product};else added.push({id:'fl-'+Date.now(),...product});
+     renderAdminProducts();
+     if(status)status.textContent=previousIndex>=0?'✏️ Producto actualizado. Guardando…':'➕ Producto agregado. Guardando…';
+     const ok=await persistProducts();
+     if(ok){
+       clearProductForm();
+       if(status)status.textContent=previousIndex>=0?'✅ ¡Producto actualizado con éxito!':'✅ ¡Producto guardado con éxito!';
+     }else if(status){
+       status.textContent='❌ El producto quedó en la lista, pero no se pudo confirmar el guardado en la nube.';
+     }
+   }catch(err){
+     console.error('FlorEla catálogo: error al agregar/actualizar producto',err);
+     if(status)status.textContent='❌ No se pudo agregar el producto: '+(err?.message||'error inesperado');
+   }
  });
  renderAdminProducts();
  window.addEventListener('florela-cloud-products-loaded',()=>{added=Array.isArray(window.__florelaCloudProducts)?window.__florelaCloudProducts.slice():[];editingIndex=-1;pendingImages=[];renderAdminProducts();});
