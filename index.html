@@ -774,6 +774,7 @@ body.florela-edit-mode [data-admin-editable="true"]{outline:2px dashed #b84b63;o
 <div class="admin-field">
 <label for="admProductOldPrice">Precio anterior</label>
 <input id="admProductOldPrice" min="0" placeholder="Opcional" step="0.01" type="number"/>
+<small style="display:block;margin-top:6px;color:var(--muted);line-height:1.4">Si colocas un precio anterior, el sitio mostrará el precio actual junto al precio anterior tachado y la etiqueta <strong>Descuento</strong>, sin calcular ni mostrar porcentaje.</small>
 </div>
 <div class="admin-field">
 <label for="admProductStock">Stock</label>
@@ -1141,8 +1142,10 @@ $('admSave').addEventListener('click',async()=>{const map={admCream:'cream',admI
      const prepText=p.prep===0?'Listo para entrega':(p.prep?p.prep+' '+(Number(p.prep)===1?'día':'días'):'Sin indicar');
      const basePrice=Number(p.price||0);
      const discount=Number(p.discount||0);
+     const oldPrice=Number(p.oldPrice||0);
      const final=discount>0?Math.max(0,basePrice*(1-discount/100)):basePrice;
-     const priceText=discount?money(final)+" <s>"+money(basePrice)+"</s> · "+discount+"% desc.":money(basePrice);
+     const hasManualOldPrice=discount<=0 && oldPrice>final && oldPrice>0;
+     const priceText=discount?money(final)+" <s>"+money(basePrice)+"</s> · "+discount+"% desc.":hasManualOldPrice?money(final)+" <s>"+money(oldPrice)+"</s> · Descuento":money(basePrice);
      return `<details class="admin-product-card"><summary class="admin-product-summary"><div class="admin-product-main">${img?`<img src="${img}" alt="">`:'<div style="width:58px;height:58px;border-radius:10px;background:#f4e8df;display:grid;place-items:center;flex:none">🌷</div>'}<div class="admin-product-quick"><b>${safe(p.name||'Sin nombre')}</b><small>${priceText} · ${status} · ${prepText}</small></div></div></summary><div class="admin-product-details"><div class="admin-product-meta">Preparación: ${prepText} · Stock: ${p.stock??0} · SKU: ${safe(p.sku||'—')}<br>Fotos: ${(p.images||[]).length} · Color: ${safe(p.color||'—')} · Categoría: ${safe(p.category||'—')} ${p.featured?'· Destacado':''}</div><div class="admin-product-actions"><button type="button" class="admin-secondary" data-edit="${i}">Editar</button><button type="button" class="admin-secondary" data-toggle="${i}">${p.status==='active'?'Ocultar':'Activar'}</button><button type="button" class="admin-secondary" data-remove="${i}">Eliminar</button></div></div></details>`;
    }).join(''):'<div class="admin-note">Todavía no hay productos creados en el administrador.</div>';
    $('admProductList').querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>editProduct(+b.dataset.edit));
@@ -1462,7 +1465,8 @@ function renderProducts(){
     const hint="";
     const gallery=imgs.length?`<div class="product-gallery" data-gallery-id="${safe(id)}" data-gallery-index="0" data-gallery-count-total="${imgs.length}"><img data-gallery-image="${safe(id)}" src="${imgs[0]}" alt="${safe(p.name)}" loading="lazy">${arrows}${dots}${counter}${hint}${p.status==='inactive'?'<div class="soldout-overlay" aria-label="Agotado"><span>AGOTADO</span></div>':''}</div>`:'<div class="product-placeholder" style="height:100%;display:grid;place-items:center;background:#f7eee7;font-size:52px">🌷</div>';
     const isFav=favorites.includes(p.id);
-    const price=p.discount?`<div class="price">${money(p.price)} <small style="text-decoration:line-through;opacity:.65">${money(p.originalPrice)}</small> <small style="color:var(--red)">-${Number(p.discount)}%</small></div>`:`<div class="price">${money(p.price)}</div>`;
+    const hasManualOldPrice=Number(p.discount||0)<=0 && Number(p.oldPrice||0)>Number(p.price||0) && Number(p.oldPrice||0)>0;
+    const price=p.discount?`<div class="price">${money(p.price)} <small style="text-decoration:line-through;opacity:.65">${money(p.originalPrice)}</small> <small style="color:var(--red)">-${Number(p.discount)}%</small></div>`:hasManualOldPrice?`<div class="price">${money(p.price)} <small style="text-decoration:line-through;opacity:.65">${money(p.oldPrice)}</small> <small style="color:var(--red)">Descuento</small></div>`:`<div class="price">${money(p.price)}</div>`;
     const el=document.createElement("article");el.className="product";
     const soldOut=p.status==='inactive' || (Number(p.stock)>0 && Number(p.stock)<=0);
     const stockLeft=Number(p.stock)>0?Math.max(0,Math.floor(Number(p.stock))-cartUnitsForProduct(p.id)):null;
@@ -3138,7 +3142,8 @@ document.addEventListener("click",function(e){
     meta.innerHTML=(p.featured?'<span class="florela-detail-pill florela-detail-featured">★ Destacado</span>':'')+(p.category?'<span class="florela-detail-pill">'+esc(p.category)+'</span>':'');
     title.textContent=p.name||'Producto FlorEla';
     const normal=money(p.price);
-    price.innerHTML=p.discount?normal+' <small style="text-decoration:line-through;opacity:.62">'+money(p.originalPrice)+'</small> <small>−'+Number(p.discount)+'%</small>':normal;
+    const hasManualOldPrice=Number(p.discount||0)<=0 && Number(p.oldPrice||0)>Number(p.price||0) && Number(p.oldPrice||0)>0;
+    price.innerHTML=p.discount?normal+' <small style="text-decoration:line-through;opacity:.62">'+money(p.originalPrice)+'</small> <small>−'+Number(p.discount)+'%</small>':hasManualOldPrice?normal+' <small style="text-decoration:line-through;opacity:.62">'+money(p.oldPrice)+'</small> <small>Descuento</small>':normal;
     desc.textContent=p.desc||'Sin descripción adicional.';
     const colors=Array.isArray(p.colors)&&p.colors.length?p.colors:['Personalizado'];
     color.innerHTML=colors.map(c=>'<option>'+esc(c)+'</option>').join('');
