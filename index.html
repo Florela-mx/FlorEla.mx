@@ -748,12 +748,18 @@ body.florela-edit-mode [data-admin-editable="true"]{outline:2px dashed #b84b63;o
 </div>
 <div class="admin-grid">
 <div class="admin-field">
-<label for="admProductPrice">Precio</label>
+<label for="admProductPrice">Precio actual</label>
 <input id="admProductPrice" min="0" placeholder="0" step="0.01" type="number"/>
+</div>
+<div class="admin-field">
+<label for="admProductOldPrice">Precio anterior</label>
+<input id="admProductOldPrice" min="0" placeholder="Opcional" step="0.01" type="number"/>
+<small style="display:block;margin-top:6px;color:var(--muted);line-height:1.4">Opcional. Se mostrará tachado cuando exista una rebaja.</small>
 </div>
 <div class="admin-field">
 <label for="admProductDiscount">Descuento (%)</label>
 <input id="admProductDiscount" max="100" min="0" placeholder="0" step="1" type="number"/>
+<small style="display:block;margin-top:6px;color:var(--muted);line-height:1.4">Puedes usar porcentaje o solo precio anterior.</small>
 </div>
 <div class="admin-field">
 <label for="admProductColor">Color</label>
@@ -770,11 +776,6 @@ body.florela-edit-mode [data-admin-editable="true"]{outline:2px dashed #b84b63;o
 <option value="4">4 días</option>
 <option value="5">5 días</option>
 </select>
-</div>
-<div class="admin-field">
-<label for="admProductOldPrice">Precio anterior</label>
-<input id="admProductOldPrice" min="0" placeholder="Opcional" step="0.01" type="number"/>
-<small style="display:block;margin-top:6px;color:var(--muted);line-height:1.4">Si colocas un precio anterior, el sitio mostrará el precio actual en <strong>vino</strong>, el precio anterior tachado en <strong>negro</strong> y la etiqueta <strong>Descuento</strong>, sin calcular ni mostrar porcentaje. Si no colocas precio anterior ni descuento, el precio se mostrará en negro.</small>
 </div>
 <div class="admin-field">
 <label for="admProductStock">Stock</label>
